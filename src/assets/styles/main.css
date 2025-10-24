@@ -1,0 +1,166 @@
+/* Global Styles */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Dashboard Layout */
+.dashboard-container {
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
+  color: white;
+  width: 250px;
+  min-height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.main-content {
+  margin-left: 250px;
+  height: 100vh;
+  overflow-y: auto;
+  background-color: #f8f9fa;
+}
+
+.content-header {
+  background: white;
+  border-bottom: 1px solid #dee2e6;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Widget Styles */
+.widget {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin-bottom: 1.5rem;
+  transition: box-shadow 0.3s ease;
+}
+
+.widget:hover {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.widget-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #dee2e6;
+  font-weight: 600;
+  color: #495057;
+}
+
+.widget-content {
+  padding: 1.5rem;
+}
+
+/* Flight List Styles */
+.flight-item {
+  padding: 1rem;
+  border-bottom: 1px solid #dee2e6;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.flight-item:hover {
+  background-color: #f8f9fa;
+}
+
+.flight-item:last-child {
+  border-bottom: none;
+}
+
+/* Plot Container */
+.plot-container {
+  min-height: 400px;
+  background: white;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+/* Cesium Container */
+.cesium-container {
+  height: 500px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+  
+  .sidebar.show {
+    transform: translateX(0);
+  }
+  
+  .main-content {
+    margin-left: 0;
+  }
+}
+
+/* Loading States */
+.loading-spinner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+/* Status Colors */
+.status-success { color: #28a745; }
+.status-warning { color: #ffc107; }
+.status-danger { color: #dc3545; }
+.status-info { color: #17a2b8; }
+
+/* Custom Buttons */
+.btn-outline-secondary {
+  border-color: #6c757d;
+  color: #6c757d;
+}
+
+.btn-outline-secondary:hover {
+  background-color: #6c757d;
+  border-color: #6c757d;
+}
+
+/* Navigation Styles */
+.nav-link {
+  color: rgba(255,255,255,0.8) !important;
+  transition: color 0.2s ease;
+}
+
+.nav-link:hover,
+.nav-link.active {
+  color: white !important;
+  background-color: rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+
+/* Scrollbar Styles */
+.sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar::-webkit-scrollbar-track {
+  background: #34495e;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: #7f8c8d;
+  border-radius: 3px;
+}
+
+.sidebar::-webkit-scrollbar-thumb:hover {
+  background: #95a5a6;
+}

@@ -1,0 +1,48 @@
+{
+  "name": "drone-log-book-dashboard",
+  "version": "1.0.0",
+  "description": "A Vue.js dashboard for analyzing drone flight logs using Dronelogbook API",
+  "scripts": {
+    "serve": "vue-cli-service serve",
+    "build": "vue-cli-service build",
+    "lint": "vue-cli-service lint",
+    "dev": "vite",
+    "build:prod": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.5.0",
+    "bootstrap": "^5.3.2",
+    "bootstrap-vue-next": "^0.14.10",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-session": "^1.18.2",
+    "file-saver": "^2.0.5",
+    "got": "^11.8.6",
+    "luxon": "^3.4.3",
+    "pinia": "^2.1.6",
+    "plotly.js": "^2.26.0",
+    "tough-cookie": "^6.0.0",
+    "uuid": "^9.0.0",
+    "vue": "^3.3.4",
+    "vue-router": "^4.2.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.4.0",
+    "@vue/cli-plugin-eslint": "~5.0.0",
+    "@vue/cli-plugin-router": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/eslint-config-standard": "^8.0.1",
+    "eslint": "^8.49.0",
+    "eslint-plugin-vue": "^9.17.0",
+    "sass": "^1.69.0",
+    "typescript": "^5.2.2",
+    "vite": "^4.4.9"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead",
+    "not ie 11"
+  ]
+}
