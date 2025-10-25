@@ -125,7 +125,14 @@ class DronelogbookAPI {
   // Flight data methods
   async getFlights(params = {}) {
     try {
-      const response = await this.client.get('/flights', { params })
+      // Map periodDays to range for backend compatibility
+      const queryParams = { ...params }
+      if (params.periodDays) {
+        queryParams.range = params.periodDays
+        // Keep periodDays as well for backward compatibility
+      }
+      
+      const response = await this.client.get('/flights', { params: queryParams })
       return response.data
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch flights')

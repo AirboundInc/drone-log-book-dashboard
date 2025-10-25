@@ -80,7 +80,7 @@
             :key="period.value"
             class="btn period-btn"
             :class="{ active: selectedPeriod === period.value }"
-            @click="selectedPeriod = period.value"
+            @click="() => { console.log('🔘 Period button clicked:', period.label, period.value); selectedPeriod = period.value }"
           >
             {{ period.label }}
           </button>
@@ -226,8 +226,10 @@ export default {
       // If we have dashboard stats, use those (more accurate)
       if (dashboardStats.value) {
         const ds = dashboardStats.value
+        
+        // Stats cards show ALL-TIME totals (never change with period selection)
         return {
-          totalFlights: ds.totalFlights || ds.flightsLast7Days || 0,
+          totalFlights: ds.totalFlights || 0, // All-time total
           totalFlightTime: ds.flyingTime || calculateTotalFlightTime(flights.value), // Use extracted flyingTime from dashboard
           totalDistance: ds.totalDistance ? ds.totalDistance.replace(' km', '') : estimateDistance(flights.value), // Use extracted distance, remove ' km' suffix
           totalAircraft: ds.totalAircraft || 0,
@@ -306,10 +308,24 @@ export default {
     // Recent stats for circular charts - use dashboard stats breakdown if available
     const recentStats = computed(() => {
       if (dashboardStats.value) {
+        const ds = dashboardStats.value
+        
+        // Circular charts show PERIOD-FILTERED counts (change with period selection)
+        let periodFlights = 0
+        if (selectedPeriod.value === '7' && ds.flightsLast7Days !== undefined) {
+          periodFlights = ds.flightsLast7Days
+        } else if (selectedPeriod.value === '30' && ds.flightsLast30Days !== undefined) {
+          periodFlights = ds.flightsLast30Days
+        } else if (selectedPeriod.value === '90' && ds.flightsLast90Days !== undefined) {
+          periodFlights = ds.flightsLast90Days
+        } else {
+          periodFlights = ds.totalFlights || 0 // Fallback to all-time if period data not available
+        }
+        
         return {
-          recentFlights: dashboardStats.value.flightsLast7Days || dashboardStats.value.totalFlights || 0,
-          activeDrones: dashboardStats.value.totalAircraft || 0,
-          purposeBreakdown: dashboardStats.value.purposeBreakdown || {}
+          recentFlights: periodFlights,
+          activeDrones: ds.totalAircraft || 0,
+          purposeBreakdown: ds.purposeBreakdown || {}
         }
       }
       
@@ -545,11 +561,15 @@ export default {
         // Store dashboard statistics for use in computed properties
         if (response.stats) {
           dashboardStats.value = response.stats
+          console.log('📊 Dashboard stats updated for period:', selectedPeriod.value, 'days')
           console.log('📊 Using dashboard statistics:', response.stats)
           console.log(`   - Total Flights: ${response.stats.totalFlights || response.stats.flightsLast7Days}`)
           console.log(`   - Total Drones: ${response.stats.totalAircraft}`)
+          console.log(`   - Flying Time: ${response.stats.flyingTime}`)
+          console.log(`   - Total Distance: ${response.stats.totalDistance}`)
           console.log(`   - Purpose Breakdown:`, response.stats.purposeBreakdown)
           console.log(`   - Projects: ${response.stats.totalProjects}`)
+          console.log(`   - Chart Data Points: Flying Time=${response.stats.chartData?.flyingTime?.length}, Flight Counts=${response.stats.chartData?.flightCounts?.length}`)
         } else {
           dashboardStats.value = null
           console.log('⚠️ No dashboard stats found, will calculate from flights')
@@ -567,7 +587,9 @@ export default {
     // When user switches the selected period, refresh flights to let proxy aggregate appropriately
     watch(selectedPeriod, (newVal, oldVal) => {
       console.log('⏱ Time period changed from', oldVal, 'to', newVal, '- reloading flights')
-      loadData()
+      if (newVal !== oldVal) {
+        loadData()
+      }
     })
 
     const loadData = async () => {

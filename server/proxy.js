@@ -7,12 +7,12 @@ const { CookieJar } = require('tough-cookie');
 const querystring = require('querystring');
 
 // Function to extract flight data from dronelogbook.com HTML
-function extractFlightDataFromHTML(html) {
+function extractFlightDataFromHTML(html, rangeDays = 0) {
   try {
     console.log('🔍 Parsing HTML...');
     
     // PRIORITY 1: Extract dashboard statistics first (fast)
-    const stats = extractDashboardStats(html);
+    const stats = extractDashboardStats(html, rangeDays);
     if (stats && Object.keys(stats).length > 0) {
       console.log('✅ Dashboard stats extracted');
     }
@@ -743,15 +743,122 @@ function extractChartData(html) {
 }
 
 // Helper to extract dashboard statistics from HTML
-function extractDashboardStats(html) {
+function extractDashboardStats(html, rangeDays = 0) {
   const stats = {};
   
   try {
-    // Pattern 1: Extract from the circle containers - FLIGHTS
-    const flightsCirclePattern = /<div class="total">(\d+)<\/div>\s*<div class="category">FLIGHTS<\/div>/i;
-    const flightsMatch = html.match(flightsCirclePattern);
-    if (flightsMatch) {
-      stats.totalFlights = parseInt(flightsMatch[1]);
+    console.log(`📊 Extracting dashboard stats (rangeDays=${rangeDays})...`);
+    
+    // Pattern 1 (PRIORITY): Extract from top bar stat divs - most reliable for filtered data
+    // <div class="stat"><p>Flights</p><!--strong>1233</strong--><strong>1233</strong></div>
+    // Flying Time
+    const flyingTimePattern = /<div class="stat">\s*<p>Flying Time<\/p>\s*<strong>([^<]+)<\/strong>/i;
+    const flyingTimeMatch = html.match(flyingTimePattern);
+    if (flyingTimeMatch) {
+      stats.flyingTime = flyingTimeMatch[1].trim();
+      console.log('✅ Extracted Flying Time from top bar:', stats.flyingTime);
+    }
+    
+    // Flights count from header (most reliable - includes filtered data)
+    // Handle both formats: with and without HTML comments
+    // The HTML has lots of whitespace/newlines, so we need to be very flexible
+    
+    // The HTML has: <p>Flights</p><!--strong>1233</strong--><strong>100</strong>
+    // The top bar ALWAYS shows the ALL-TIME total, regardless of filters
+    // We need to match the LAST <strong> tag (the one NOT in comments)
+    
+    // First, remove all HTML comments from the flights section
+    const flightsDebugPattern = /<div class="stat"[^>]*>[\s\S]{0,200}Flights[\s\S]{0,200}<\/div>/i;
+    const flightsDebug = html.match(flightsDebugPattern);
+    if (flightsDebug) {
+      console.log('🔍 Found Flights stat div:', flightsDebug[0]);
+      
+      // Remove HTML comments and then extract the number
+      const flightsHtmlNoComments = flightsDebug[0].replace(/<!--[\s\S]*?-->/g, '');
+      console.log('🔍 After removing comments:', flightsHtmlNoComments);
+      
+      const flightsCleanPattern = /<p>Flights<\/p>\s*<strong>(\d+)<\/strong>/i;
+      const flightsCleanMatch = flightsHtmlNoComments.match(flightsCleanPattern);
+      if (flightsCleanMatch) {
+        const flightCount = parseInt(flightsCleanMatch[1]);
+        console.log(`🔍 Regex captured flight count from top bar: ${flightCount}`);
+        
+        // Top bar ALWAYS shows all-time total, so always set totalFlights
+        stats.totalFlights = flightCount;
+        console.log('✅ Extracted totalFlights from top bar (all-time):', flightCount);
+      }
+    } else {
+      console.log('⚠️ Could not find any div with class="stat" containing "Flights"');
+      console.log('⚠️ Could not extract flights - trying to find ALL strong tags after Flights');
+      // Last resort: find all numbers in strong tags after "Flights"
+      const flightsContextPattern = /<p>Flights<\/p>([\s\S]{0,200})/i;
+      const flightsContext = html.match(flightsContextPattern);
+      if (flightsContext) {
+        console.log('🔍 Content after <p>Flights</p>:', flightsContext[1].substring(0, 150));
+        // Find all strong tags with numbers
+        const strongPattern = /<strong>(\d+)<\/strong>/g;
+        const matches = [...flightsContext[1].matchAll(strongPattern)];
+        if (matches.length > 0) {
+          // Take the last match (should be the actual value, not the commented one)
+          const flightCount = parseInt(matches[matches.length - 1][1]);
+          
+          // Apply same logic as above
+          if (rangeDays === 7) {
+            stats.flightsLast7Days = flightCount;
+            console.log('✅ Extracted flightsLast7Days (last strong tag):', flightCount);
+          } else if (rangeDays === 30) {
+            stats.flightsLast30Days = flightCount;
+            console.log('✅ Extracted flightsLast30Days (last strong tag):', flightCount);
+          } else if (rangeDays === 90) {
+            stats.flightsLast90Days = flightCount;
+            console.log('✅ Extracted flightsLast90Days (last strong tag):', flightCount);
+          } else {
+            stats.totalFlights = flightCount;
+            console.log('✅ Extracted totalFlights (last strong tag):', flightCount);
+          }
+        }
+      }
+    }
+    
+    // Total Travelled Distance
+    const distancePattern = /<div class="stat">\s*<p>Total Travelled Distance<\/p>\s*<strong>([^<]+)<\/strong>/i;
+    const distanceMatch = html.match(distancePattern);
+    if (distanceMatch) {
+      stats.totalDistance = distanceMatch[1].trim();
+      console.log('✅ Extracted Distance from top bar:', stats.totalDistance);
+    }
+    
+    // Pattern 2: Extract from the circle containers - FLIGHTS
+    // IMPORTANT: Circles show FILTERED data based on the selected period
+    // So we need to set the appropriate period field based on rangeDays
+    const shouldExtractFromCircles = rangeDays === 7 ? !stats.flightsLast7Days :
+                                     rangeDays === 30 ? !stats.flightsLast30Days :
+                                     rangeDays === 90 ? !stats.flightsLast90Days :
+                                     false; // Don't extract from circles if no range
+    
+    console.log(`🔍 Pattern 2 check: rangeDays=${rangeDays}, shouldExtractFromCircles=${shouldExtractFromCircles}`);
+    console.log(`   Current stats: flightsLast7Days=${stats.flightsLast7Days}, flightsLast30Days=${stats.flightsLast30Days}, flightsLast90Days=${stats.flightsLast90Days}`);
+    
+    if (shouldExtractFromCircles) {
+      const flightsCirclePattern = /<div class="total">(\d+)<\/div>\s*<div class="category">FLIGHTS<\/div>/i;
+      const flightsMatch = html.match(flightsCirclePattern);
+      if (flightsMatch) {
+        const flightCount = parseInt(flightsMatch[1]);
+        console.log(`🔍 Circle pattern matched, extracted: ${flightCount}`);
+        
+        if (rangeDays === 7) {
+          stats.flightsLast7Days = flightCount;
+          console.log('✅ Extracted flightsLast7Days from circle (filtered):', flightCount);
+        } else if (rangeDays === 30) {
+          stats.flightsLast30Days = flightCount;
+          console.log('✅ Extracted flightsLast30Days from circle (filtered):', flightCount);
+        } else if (rangeDays === 90) {
+          stats.flightsLast90Days = flightCount;
+          console.log('✅ Extracted flightsLast90Days from circle (filtered):', flightCount);
+        }
+      } else {
+        console.log('⚠️ Circle pattern did not match');
+      }
     }
     
     // Pattern 2: Extract from the circle containers - DRONES
@@ -792,8 +899,26 @@ function extractDashboardStats(html) {
       }
       
       // Also capture the total if we haven't found it yet
-      if (total > 0 && !stats.totalFlights) {
-        stats.totalFlights = total;
+      // Check which field to update based on rangeDays
+      const needsTotal = rangeDays === 7 ? !stats.flightsLast7Days :
+                         rangeDays === 30 ? !stats.flightsLast30Days :
+                         rangeDays === 90 ? !stats.flightsLast90Days :
+                         !stats.totalFlights;
+      
+      if (total > 0 && needsTotal) {
+        if (rangeDays === 7) {
+          stats.flightsLast7Days = total;
+          console.log('✅ Extracted flightsLast7Days from DataPoint:', total);
+        } else if (rangeDays === 30) {
+          stats.flightsLast30Days = total;
+          console.log('✅ Extracted flightsLast30Days from DataPoint:', total);
+        } else if (rangeDays === 90) {
+          stats.flightsLast90Days = total;
+          console.log('✅ Extracted flightsLast90Days from DataPoint:', total);
+        } else {
+          stats.totalFlights = total;
+          console.log('✅ Extracted totalFlights from DataPoint:', total);
+        }
       }
     }
     if (Object.keys(dataPoints).length > 0 && !stats.purposeBreakdown) {
@@ -803,8 +928,30 @@ function extractDashboardStats(html) {
     // Pattern 5: Extract hover subtitle
     const hoverSubtitlePattern = /<div class="hover-sub-title">Total\s+(\d+)\s+Flights<\/div>/i;
     const hoverMatch = html.match(hoverSubtitlePattern);
-    if (hoverMatch && !stats.totalFlights) {
-      stats.totalFlights = parseInt(hoverMatch[1]);
+    if (hoverMatch) {
+      const flightCount = parseInt(hoverMatch[1]);
+      
+      // Check which field needs to be updated
+      const needsTotal = rangeDays === 7 ? !stats.flightsLast7Days :
+                         rangeDays === 30 ? !stats.flightsLast30Days :
+                         rangeDays === 90 ? !stats.flightsLast90Days :
+                         !stats.totalFlights;
+      
+      if (needsTotal) {
+        if (rangeDays === 7) {
+          stats.flightsLast7Days = flightCount;
+          console.log('✅ Extracted flightsLast7Days from hover subtitle:', flightCount);
+        } else if (rangeDays === 30) {
+          stats.flightsLast30Days = flightCount;
+          console.log('✅ Extracted flightsLast30Days from hover subtitle:', flightCount);
+        } else if (rangeDays === 90) {
+          stats.flightsLast90Days = flightCount;
+          console.log('✅ Extracted flightsLast90Days from hover subtitle:', flightCount);
+        } else {
+          stats.totalFlights = flightCount;
+          console.log('✅ Extracted totalFlights from hover subtitle:', flightCount);
+        }
+      }
     }
     
     // Pattern 6: Extract projects count
@@ -814,28 +961,7 @@ function extractDashboardStats(html) {
       stats.totalProjects = parseInt(projectsMatch[1]);
     }
     
-    // Pattern 7: Extract header statistics from stats-container
-    // Flying Time
-    const flyingTimePattern = /<div class="stat">\s*<p>Flying Time<\/p>\s*<strong>([^<]+)<\/strong>/i;
-    const flyingTimeMatch = html.match(flyingTimePattern);
-    if (flyingTimeMatch) {
-      stats.flyingTime = flyingTimeMatch[1].trim();
-    }
-    
-    // Flights count from header (more reliable than circles)
-    const flightsHeaderPattern = /<div class="stat">\s*<p>Flights<\/p>\s*(?:<!--[^>]*-->\s*)?<strong>(\d+)<\/strong>/i;
-    const flightsHeaderMatch = html.match(flightsHeaderPattern);
-    if (flightsHeaderMatch) {
-      stats.totalFlights = parseInt(flightsHeaderMatch[1]);
-      stats.flightsLast7Days = stats.totalFlights;
-    }
-    
-    // Total Travelled Distance
-    const distancePattern = /<div class="stat">\s*<p>Total Travelled Distance<\/p>\s*<strong>([^<]+)<\/strong>/i;
-    const distanceMatch = html.match(distancePattern);
-    if (distanceMatch) {
-      stats.totalDistance = distanceMatch[1].trim();
-    }
+    // Pattern 7: Extract header statistics from stats-container (removed - now in Pattern 1)
     
     // Pattern 8: Look for aircraft/drone breakdown
     const droneDataPattern = /<div class="circle two">[\s\S]*?<div class="data-container">([\s\S]*?)<\/div>/i;
@@ -870,11 +996,11 @@ function extractDashboardStats(html) {
       }
     });
     
-    // If no specific 7-day count found, use total flights as fallback
-    if (!stats.flightsLast7Days && stats.totalFlights) {
-      stats.flightsLast7Days = stats.totalFlights;
-      console.log(`ℹ️ Using total flights as 7-day count: ${stats.flightsLast7Days}`);
-    }
+    // No fallback needed - top bar provides totalFlights, circles provide period-specific counts
+    // if (!stats.flightsLast7Days && stats.totalFlights) {
+    //   stats.flightsLast7Days = stats.totalFlights;
+    //   console.log(`ℹ️ Using total flights as 7-day count: ${stats.flightsLast7Days}`);
+    // }
     
     console.log('� Final extracted stats:', stats);
     return stats;
@@ -1192,6 +1318,74 @@ async function fetchCsrfAndJar() {
   return { jar, csrf, html, res };
 }
 
+// Try posting to dashboard.php with several likely form payloads (e.g. Last 30 days)
+async function postDashboardWithRange(jar, csrf, rangeDays) {
+  const client = getClientWithJar(jar);
+  
+  // Map rangeDays to the correct flightFilterPeriod value
+  let filterPeriod;
+  if (rangeDays === 7) {
+    filterPeriod = 'SHORT';
+  } else if (rangeDays === 30) {
+    filterPeriod = 'MEDIUM';
+  } else if (rangeDays === 90) {
+    filterPeriod = 'LONG';
+  } else {
+    console.log('⚠️ Unknown range days:', rangeDays);
+    return { res: null, html: '' };
+  }
+  
+  // The actual payload structure from DroneLogBook
+  const payload = {
+    action: 'menu',
+    flightBlock: '',
+    viewUserOnlyFigures: '',
+    viewTotalYearFigures: '',
+    flightFilterPeriod: filterPeriod
+  };
+  
+  if (csrf) {
+    payload.CSRF_Sec_Token = csrf;
+  }
+  
+  try {
+    const body = querystring.stringify(payload);
+    console.log(`📤 Posting to dashboard.php with flightFilterPeriod=${filterPeriod} (${rangeDays} days)`);
+    console.log(`   Body: ${body}`);
+    
+    const r = await client.post('dashboard.php', {
+      body,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': SITE_ORIGIN + '/dashboard.php',
+        'Origin': SITE_ORIGIN,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      }
+    });
+
+    const html = r.body || '';
+    console.log(`📦 dashboard POST response: status=${r.statusCode}, length=${html.length}`);
+
+    // Check if we got valid dashboard content (stats + chart data)
+    const hasStats = /total.{0,20}flights?/i.test(html) || /flights?.{0,20}total/i.test(html);
+    const hasChart = /CanvasJS\.Chart/.test(html) || /chartContainer1/.test(html) || /dataPoints/.test(html);
+    
+    if (hasStats && hasChart) {
+      console.log(`✅✅✅ SUCCESS! Dashboard HTML with stats AND chart data using flightFilterPeriod=${filterPeriod} ✅✅✅`);
+      return { res: r, html };
+    } else if (hasStats || hasChart) {
+      console.log(`⚠️ Partial match: hasStats=${hasStats}, hasChart=${hasChart}`);
+      return { res: r, html }; // Return anyway, might be enough
+    } else {
+      console.log('⚠️ Response does not contain expected dashboard content');
+      return { res: null, html: '' };
+    }
+  } catch (err) {
+    console.log(`❌ Error posting dashboard with flightFilterPeriod=${filterPeriod}:`, err.message);
+    return { res: null, html: '' };
+  }
+}
+
 // Support both /api/login and /api/auth/login for compatibility
 app.post(['/api/login', '/api/auth/login'], async (req, res) => {
   try {
@@ -1347,15 +1541,48 @@ app.get('/api/flights', async (req, res) => {
     try {
       // Fetch dashboard.php - it contains all the stats we need
       console.log('🔍 Fetching dashboard.php...');
-      const r = await client.get('dashboard.php');
 
-      if (r.statusCode >= 200 && r.statusCode < 300) {
-        const body = r.body || '';
+      // Allow optional query param to request a specific range (e.g. ?range=30 for Last 30 days)
+      const rangeDays = parseInt(req.query.range || req.query.days || req.query.period || '0', 10) || 0;
+      let r;
+      let dashboardHtml = '';
+      
+      if (rangeDays > 0) {
+        console.log(`🔁 Attempting POST dashboard with range=${rangeDays} days`);
+        // Try to extract CSRF token from existing jar cookies
+        const cookies = await jar.getCookies(SITE_ORIGIN + '/');
+        const csrfCookie = cookies.find(c => c.key && (c.key.toLowerCase().includes('csrf') || c.key.toLowerCase().includes('token') || c.key === 'CSRF_Sec_Token'));
+        const csrf = csrfCookie ? csrfCookie.value : null;
+        
+        if (csrf) {
+          console.log(`✅ Using CSRF token: ${csrf.substring(0, 8)}...`);
+        } else {
+          console.log('⚠️ No CSRF token found in cookies, attempting POST without it');
+        }
+
+        const posted = await postDashboardWithRange(jar, csrf, rangeDays);
+        if (posted && posted.res && posted.html && posted.html.length > 0) {
+          console.log(`✅ POST successful, using filtered dashboard data (${posted.html.length} bytes)`);
+          r = posted.res;
+          dashboardHtml = posted.html;
+        } else {
+          console.log('ℹ️ POST did not return complete dashboard HTML, falling back to GET');
+          r = await client.get('dashboard.php');
+          dashboardHtml = r.body || '';
+        }
+      } else {
+        console.log('📥 Using GET dashboard.php (no range filter)');
+        r = await client.get('dashboard.php');
+        dashboardHtml = r.body || '';
+      }
+
+      if (r && r.statusCode >= 200 && r.statusCode < 300) {
+        const body = dashboardHtml;
         console.log(`✅ Dashboard returned ${r.statusCode}, body length: ${body.length}`);
 
         // Extract stats and flights from dashboard HTML
         console.log('� Parsing HTML...');
-        const result = extractFlightDataFromHTML(body);
+        const result = extractFlightDataFromHTML(body, rangeDays);
         const extractedFlights = result?.flights || [];
         const extractedStats = result?.stats || null;
         
