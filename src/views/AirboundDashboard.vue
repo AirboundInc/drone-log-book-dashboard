@@ -1,156 +1,192 @@
 <template>
   <div class="dashboard-container">
-    <!-- Header Section -->
-    <div class="header-section mb-4">
-      <div class="d-flex justify-content-between align-items-center">
-        <div>
+    <!-- Header Card -->
+    <div class="header-card">
+      <div class="header-content">
+        <div class="header-left">
           <h1 class="company-name">Airbound</h1>
-          <div class="stats-buttons mt-2">
-            <button class="btn btn-outline-secondary btn-sm me-2">View Individual Stats</button>
-            <button class="btn btn-outline-secondary btn-sm">View Current Year</button>
-          </div>
         </div>
-        <div class="top-stats d-flex">
-          <div class="stat-item text-center me-5">
+        <div class="header-stats">
+          <div class="stat-card">
             <div class="stat-label">Flying Time</div>
             <div class="stat-value">{{ stats.totalFlightTime }}</div>
           </div>
-          <div class="stat-item text-center me-5">
+          <div class="stat-card">
             <div class="stat-label">Flights</div>
             <div class="stat-value">{{ stats.totalFlights }}</div>
           </div>
-          <div class="stat-item text-center">
-            <div class="stat-label">Total Travelled Distance</div>
+          <div class="stat-card">
+            <div class="stat-label">Total Distance</div>
             <div class="stat-value">{{ stats.totalDistance }} km</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Navigation Tabs -->
-    <nav class="dashboard-nav mb-4">
-      <div class="nav-tabs-custom">
-        <div class="nav-item active">
-          <span class="badge bg-danger">2</span>
-          Flights
-        </div>
-        <div class="nav-item">Maintenance</div>
-        <div class="nav-item">Inventory</div>
-        <div class="nav-item">Documents</div>
-        <div class="nav-item">Incidents</div>
-      </div>
-    </nav>
+    <!-- Main Content -->
+    <div class="content-wrapper">
+      <h2 class="section-title">Flights</h2>
 
-    <!-- Main Dashboard Content -->
-    <div class="row">
-      <div class="col-12">
-        <h2 class="section-title mb-4">Flights</h2>
-      </div>
-    </div>
-
-    <!-- Charts and Stats Section -->
-    <div class="row mb-5">
-      <!-- Circular Charts -->
-      <div class="col-md-4">
-        <div class="chart-container">
-          <div class="circular-chart-wrapper">
-            <div class="circular-chart flights-chart">
-              <div class="chart-center">
-                <div class="chart-number">{{ recentStats.recentFlights }}</div>
-                <div class="chart-label">FLIGHTS</div>
-              </div>
-            </div>
+      <!-- Charts Grid -->
+      <div class="charts-grid">
+        <!-- Pie Charts Card -->
+        <div class="card pie-charts-card">
+          <div class="card-header">
+            <h3 class="card-title">Breakdown</h3>
           </div>
-          <div class="circular-chart-wrapper mt-4">
-            <div class="circular-chart drones-chart">
-              <div class="chart-center">
-                <div class="chart-number">{{ recentStats.activeDrones }}</div>
-                <div class="chart-label">DRONES</div>
+          <div class="card-body">
+            <div class="charts-horizontal">
+              <!-- Purpose Breakdown Pie Chart -->
+              <div class="chart-item">
+                <h4 class="chart-subtitle">Flights</h4>
+                <div class="purpose-pie-chart">
+                  <svg viewBox="0 0 200 200" class="pie-svg">
+                    <g v-if="purposeSegments && purposeSegments.length > 0" transform="translate(100, 100)">
+                      <path
+                        v-for="(segment, index) in purposeSegments"
+                        :key="segment.purpose"
+                        :d="segment.path"
+                        :fill="segment.color"
+                        class="pie-segment"
+                      >
+                        <title>{{ segment.purpose }}: {{ segment.count }} ({{ segment.percentage }}%)</title>
+                      </path>
+                      <circle r="60" fill="white" />
+                    </g>
+                    <g v-else transform="translate(100, 100)">
+                      <circle r="90" fill="#e0e0e0" />
+                      <circle r="60" fill="white" />
+                    </g>
+                    <text x="100" y="95" text-anchor="middle" class="pie-center-number">{{ recentStats.recentFlights }}</text>
+                    <text x="100" y="110" text-anchor="middle" class="pie-center-label">FLIGHTS</text>
+                  </svg>
+                  <div v-if="purposeSegments && purposeSegments.length > 0" class="pie-legend">
+                    <div v-for="segment in purposeSegments" :key="segment.purpose" class="legend-item-pie">
+                      <span class="legend-color-box" :style="{ backgroundColor: segment.color }"></span>
+                      <span class="legend-text">{{ segment.purpose }}: {{ segment.count }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- Time Period Selector -->
-      <div class="col-md-3">
-        <div class="time-selector">
-          <button 
-            v-for="period in timePeriods" 
-            :key="period.value"
-            class="btn period-btn"
-            :class="{ active: selectedPeriod === period.value }"
-            @click="() => { console.log('🔘 Period button clicked:', period.label, period.value); selectedPeriod = period.value }"
-          >
-            {{ period.label }}
-          </button>
-        </div>
-      </div>
-
-      <!-- Bar Chart -->
-      <div class="col-md-5">
-        <div class="bar-chart-container">
-          <div class="chart-legend">
-            <span class="legend-item">
-              <span class="legend-color flying-time"></span>
-              Flying Time (minutes)
-            </span>
-            <span class="legend-item">
-              <span class="legend-color flight-count"></span>
-              Flight #
-            </span>
-            <span class="text-muted ms-3" style="font-size: 0.8rem;">
-              (12 months)
-            </span>
-          </div>
-          <div class="bar-chart">
-            <div class="chart-grid">
-              <div class="grid-line"></div>
-              <div class="grid-line"></div>
-              <div class="grid-line"></div>
-            </div>
-            <div class="chart-bars">
-              <div v-for="month in chartData" :key="month.label" class="bar-group" 
-                   :title="`${month.label}\nFlying Time: ${month.tooltip}\nFlights: ${month.flightCount}`">
-                <div class="bar flying-time-bar" 
-                     :style="{ height: month.flyingTimeHeight + '%' }"
-                     :data-value="month.flyingTime"></div>
-                <div class="bar flight-count-bar" 
-                     :style="{ height: month.flightCountHeight + '%' }"
-                     :data-value="month.flightCount"></div>
-              </div>
-            </div>
-            <div class="chart-x-labels">
-              <div v-for="month in chartData" :key="'label-' + month.label" class="x-label">
-                {{ month.label }}
-              </div>
-            </div>
-            <div class="chart-y-axis">
-              <div class="y-axis-left">
-                <div>{{ Math.round(maxFlyingTime) }}</div>
-                <div>{{ Math.round(maxFlyingTime / 2) }}</div>
-                <div>0</div>
-              </div>
-              <div class="y-axis-right">
-                <div>{{ maxFlightCount }}</div>
-                <div>{{ Math.round(maxFlightCount / 2) }}</div>
-                <div>0</div>
+              <!-- Drones/Aircraft Breakdown Chart -->
+              <div class="chart-item">
+                <h4 class="chart-subtitle">Drones</h4>
+                <div class="purpose-pie-chart">
+                  <svg viewBox="0 0 200 200" class="pie-svg">
+                    <g v-if="aircraftSegments && aircraftSegments.length > 0" transform="translate(100, 100)">
+                      <path
+                        v-for="(segment, index) in aircraftSegments"
+                        :key="segment.aircraft"
+                        :d="segment.path"
+                        :fill="segment.color"
+                        class="pie-segment"
+                      >
+                        <title>{{ segment.aircraft }}: {{ segment.count }} flights ({{ segment.percentage }}%)</title>
+                      </path>
+                      <circle r="60" fill="white" />
+                    </g>
+                    <g v-else transform="translate(100, 100)">
+                      <circle r="90" fill="#e0e0e0" />
+                      <circle r="60" fill="white" />
+                    </g>
+                    <text x="100" y="95" text-anchor="middle" class="pie-center-number">{{ recentStats.activeDrones }}</text>
+                    <text x="100" y="110" text-anchor="middle" class="pie-center-label">DRONES</text>
+                  </svg>
+                  <div v-if="aircraftSegments && aircraftSegments.length > 0" class="pie-legend">
+                    <div v-for="segment in aircraftSegments" :key="segment.aircraft" class="legend-item-pie">
+                      <span class="legend-color-box" :style="{ backgroundColor: segment.color }"></span>
+                      <span class="legend-text">{{ segment.aircraft }}: {{ segment.count }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Recent Flights Section -->
-    <div class="row">
-      <div class="col-12">
-        <div class="flights-section">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h3 class="section-title">Latest Flights ({{ filteredFlights.length }})</h3>
-            <button class="btn btn-dark">View All</button>
+        <!-- Period Selector Card -->
+        <div class="card period-card">
+          <div class="card-header">
+            <h3 class="card-title">Time Period</h3>
           </div>
-          
+          <div class="card-body">
+            <div class="period-buttons">
+              <button 
+                v-for="period in timePeriods" 
+                :key="period.value"
+                class="btn period-btn"
+                :class="{ active: selectedPeriod === period.value }"
+                @click="() => { console.log('🔘 Period button clicked:', period.label, period.value); selectedPeriod = period.value }"
+              >
+                {{ period.label }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bar Chart Card -->
+        <div class="card chart-card">
+          <div class="card-header">
+            <h3 class="card-title">Activity Over Time</h3>
+            <div class="chart-legend">
+              <span class="legend-item">
+                <span class="legend-color flying-time"></span>
+                Flying Time (min)
+              </span>
+              <span class="legend-item">
+                <span class="legend-color flight-count"></span>
+                Flight #
+              </span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="bar-chart">
+              <div class="chart-grid">
+                <div class="grid-line"></div>
+                <div class="grid-line"></div>
+                <div class="grid-line"></div>
+              </div>
+              <div class="chart-bars">
+                <div v-for="month in chartData" :key="month.label" class="bar-group" 
+                     :title="`${month.label}\nFlying Time: ${month.tooltip}\nFlights: ${month.flightCount}`">
+                  <div class="bar flying-time-bar" 
+                       :style="{ height: month.flyingTimeHeight + '%' }"
+                       :data-value="month.flyingTime"></div>
+                  <div class="bar flight-count-bar" 
+                       :style="{ height: month.flightCountHeight + '%' }"
+                       :data-value="month.flightCount"></div>
+                </div>
+              </div>
+              <div class="chart-x-labels">
+                <div v-for="month in chartData" :key="'label-' + month.label" class="x-label">
+                  {{ month.label }}
+                </div>
+              </div>
+              <div class="chart-y-axis">
+                <div class="y-axis-left">
+                  <div>{{ Math.round(maxFlyingTime) }}</div>
+                  <div>{{ Math.round(maxFlyingTime / 2) }}</div>
+                  <div>0</div>
+                </div>
+                <div class="y-axis-right">
+                  <div>{{ maxFlightCount }}</div>
+                  <div>{{ Math.round(maxFlightCount / 2) }}</div>
+                  <div>0</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Flights Card -->
+      <div class="card flights-card">
+        <div class="card-header">
+          <h3 class="card-title">Latest Flights ({{ filteredFlights.length }})</h3>
+          <button class="btn btn-dark">View All</button>
+        </div>
+        <div class="card-body">
           <div v-if="loading" class="text-center py-5">
             <div class="spinner-border text-primary" role="status"></div>
             <p class="text-muted mt-2">Loading flight data from Dronelogbook...</p>
@@ -166,12 +202,12 @@
             <table class="table flights-table">
               <thead>
                 <tr>
-                  <th style="width: 15%;">Date</th>
-                  <th style="width: 15%;">Aircraft</th>
-                  <th style="width: 12%;">Duration</th>
-                  <th style="width: 35%;">Location</th>
-                  <th style="width: 15%;">Purpose</th>
-                  <th style="width: 8%;">Actions</th>
+                  <th>Date</th>
+                  <th>Aircraft</th>
+                  <th>Duration</th>
+                  <th>Location</th>
+                  <th>Purpose</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -220,12 +256,14 @@ export default {
     const flights = ref([])
     const selectedPeriod = ref('7')
     const dashboardStats = ref(null) // Store extracted dashboard stats
+  const isLoadingStats = ref(false)
+  const prevDashboardStats = ref(null)
 
     // Global stats - use dashboard stats if available, otherwise calculate from flights
     const stats = computed(() => {
       // If we have dashboard stats, use those (more accurate)
-      if (dashboardStats.value) {
-        const ds = dashboardStats.value
+      if (dashboardStats.value || (isLoadingStats.value && prevDashboardStats.value)) {
+        const ds = (isLoadingStats.value && prevDashboardStats.value) ? prevDashboardStats.value : dashboardStats.value
         
         // Stats cards show ALL-TIME totals (never change with period selection)
         return {
@@ -307,8 +345,8 @@ export default {
 
     // Recent stats for circular charts - use dashboard stats breakdown if available
     const recentStats = computed(() => {
-      if (dashboardStats.value) {
-        const ds = dashboardStats.value
+      if (dashboardStats.value || (isLoadingStats.value && prevDashboardStats.value)) {
+        const ds = (isLoadingStats.value && prevDashboardStats.value) ? prevDashboardStats.value : dashboardStats.value
         
         // Circular charts show PERIOD-FILTERED counts (change with period selection)
         let periodFlights = 0
@@ -325,7 +363,8 @@ export default {
         return {
           recentFlights: periodFlights,
           activeDrones: ds.totalAircraft || 0,
-          purposeBreakdown: ds.purposeBreakdown || {}
+          purposeBreakdown: ds.purposeBreakdown || {},
+          aircraftBreakdown: ds.aircraftBreakdown || {}
         }
       }
       
@@ -334,8 +373,127 @@ export default {
       return {
         recentFlights: filteredFlights.value.length,
         activeDrones: uniqueAircraft.size || 0,
-        purposeBreakdown: {}
+        purposeBreakdown: {},
+        aircraftBreakdown: {}
       }
+    })
+
+    // Purpose breakdown pie chart segments
+    const purposeSegments = computed(() => {
+      const breakdown = recentStats.value.purposeBreakdown
+      console.log('🥧 purposeBreakdown data:', breakdown)
+      if (!breakdown || Object.keys(breakdown).length === 0) {
+        console.log('⚠️ No purpose breakdown data available')
+        return []
+      }
+
+      // Color palette for segments
+      const colors = [
+        '#FF6B6B', // Red
+        '#4ECDC4', // Teal
+        '#45B7D1', // Blue
+        '#FFA07A', // Light Salmon
+        '#98D8C8', // Mint
+        '#F7DC6F', // Yellow
+        '#BB8FCE', // Purple
+        '#85C1E2', // Sky Blue
+      ]
+
+      const entries = Object.entries(breakdown)
+      const total = entries.reduce((sum, [, count]) => sum + count, 0)
+      
+      let currentAngle = -90 // Start at top (12 o'clock)
+      
+      return entries.map(([purpose, count], index) => {
+        const percentage = ((count / total) * 100).toFixed(1)
+        const angle = (count / total) * 360
+        
+        // Calculate SVG path for pie segment
+        const startAngle = currentAngle
+        const endAngle = currentAngle + angle
+        
+        const startRad = (startAngle * Math.PI) / 180
+        const endRad = (endAngle * Math.PI) / 180
+        
+        const radius = 90
+        const x1 = Math.cos(startRad) * radius
+        const y1 = Math.sin(startRad) * radius
+        const x2 = Math.cos(endRad) * radius
+        const y2 = Math.sin(endRad) * radius
+        
+        const largeArc = angle > 180 ? 1 : 0
+        
+        const path = `M 0 0 L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`
+        
+        currentAngle = endAngle
+        
+        return {
+          purpose,
+          count,
+          percentage,
+          path,
+          color: colors[index % colors.length]
+        }
+      })
+    })
+
+    // Aircraft breakdown pie chart segments
+    const aircraftSegments = computed(() => {
+      const breakdown = recentStats.value.aircraftBreakdown
+      console.log('✈️ aircraftBreakdown data:', breakdown)
+      if (!breakdown || Object.keys(breakdown).length === 0) {
+        console.log('⚠️ No aircraft breakdown data available')
+        return []
+      }
+
+      // Different color palette for aircraft (blues/cyans theme)
+      const colors = [
+        '#2196F3', // Blue
+        '#FF9800', // Orange
+        '#4CAF50', // Green
+        '#9C27B0', // Purple
+        '#00BCD4', // Cyan
+        '#FF5722', // Deep Orange
+        '#795548', // Brown
+        '#607D8B', // Blue Grey
+      ]
+
+      const entries = Object.entries(breakdown)
+      const total = entries.reduce((sum, [, count]) => sum + count, 0)
+      
+      let currentAngle = -90 // Start at top (12 o'clock)
+      
+      return entries.map(([aircraft, count], index) => {
+        const percentage = ((count / total) * 100).toFixed(1)
+        const angle = (count / total) * 360
+        
+        // Calculate SVG path for pie segment
+        const startAngle = currentAngle
+        const endAngle = currentAngle + angle
+        
+        const startRad = (startAngle * Math.PI) / 180
+        const endRad = (endAngle * Math.PI) / 180
+        
+        const radius = 90
+        const x1 = Math.cos(startRad) * radius
+        const y1 = Math.sin(startRad) * radius
+        const x2 = Math.cos(endRad) * radius
+        const y2 = Math.sin(endRad) * radius
+        
+        const largeArc = angle > 180 ? 1 : 0
+        
+        const path = `M 0 0 L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`
+        
+        currentAngle = endAngle
+        
+        return {
+          aircraft,
+          count,
+          percentage,
+          path,
+          color: colors[index % colors.length]
+        }
+      })
     })
 
     // Time period options
@@ -548,16 +706,20 @@ export default {
     }
 
     const fetchFlights = async () => {
+      // Preserve previous stats while new data is loading to avoid flicker
       try {
         console.log('📊 Fetching flights from API...')
-        
         const periodDays = parseInt(selectedPeriod.value) || 7
-        
+
+        // Snapshot current dashboard stats so UI can keep showing them while loading
+        prevDashboardStats.value = dashboardStats.value ? JSON.parse(JSON.stringify(dashboardStats.value)) : null
+        isLoadingStats.value = true
+
         // Fetch flights (now returns first page only with embedded stats)
         const response = await dronelogbookAPI.getFlights({ periodDays })
         flights.value = response.flights || response.data || response || []
         console.log(`✅ Flights loaded: ${flights.value.length} flights displayed`)
-        
+
         // Store dashboard statistics for use in computed properties
         if (response.stats) {
           dashboardStats.value = response.stats
@@ -574,13 +736,18 @@ export default {
           dashboardStats.value = null
           console.log('⚠️ No dashboard stats found, will calculate from flights')
         }
-        
+
         if (response.warning) {
           console.warn(`⚠️ ${response.warning}`)
         }
       } catch (err) {
         console.error('❌ Failed to fetch flights:', err)
         error.value = 'Failed to load flights: ' + err.message
+      } finally {
+        // Done loading stats
+        isLoadingStats.value = false
+        // Clear prev snapshot after a short delay to avoid jitter (optional)
+        setTimeout(() => { prevDashboardStats.value = null }, 50)
       }
     }
 
@@ -621,6 +788,8 @@ export default {
       filteredFlights,
       stats,
       recentStats,
+      purposeSegments,
+      aircraftSegments,
       timePeriods,
       selectedPeriod,
       chartData,
@@ -628,7 +797,9 @@ export default {
       maxFlightCount,
       refreshData,
       formatDate,
-      dashboardStats
+      dashboardStats,
+      isLoadingStats,
+      prevDashboardStats
     }
   }
 }
@@ -649,203 +820,385 @@ export default {
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
+<style scoped>
+/* Dashboard Container */
+.dashboard-container {
+  padding: 2rem;
+  background: #FCFCFC;
+  min-height: 100vh;
+}
+
+/* Header Card */
+.header-card {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid #DDDDDD;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2rem;
+}
+
+.header-left {
+  flex: 1;
+}
+
 .company-name {
   font-size: 2.5rem;
-  font-weight: 300;
-  color: #333;
-  margin: 0;
+  font-weight: 700;
+  color: #03123C;
+  margin: 0 0 1rem 0;
 }
 
-.stats-buttons .btn {
-  border-radius: 20px;
-  border: 1px solid #ccc;
-  color: #666;
+.stats-buttons {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
-.top-stats {
-  align-items: flex-end;
+.header-stats {
+  display: flex;
+  gap: 2rem;
 }
 
-.stat-item {
-  min-width: 150px;
+.stat-card {
+  background: linear-gradient(135deg, #21AFFF 0%, #03123C 100%);
+  padding: 1.5rem 2rem;
+  border-radius: 10px;
+  min-width: 160px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(33, 175, 255, 0.3);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(33, 175, 255, 0.4);
 }
 
 .stat-label {
-  font-size: 0.9rem;
-  color: #666;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.85rem;
+  font-weight: 500;
   margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .stat-value {
-  font-size: 1.8rem;
-  font-weight: 600;
-  color: #333;
+  color: white;
+  font-size: 1.75rem;
+  font-weight: 700;
 }
 
-/* Navigation Tabs */
-.dashboard-nav {
+/* Navigation Card */
+.nav-card {
   background: white;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  border-radius: 12px;
+  padding: 1rem 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid #DDDDDD;
 }
 
 .nav-tabs-custom {
   display: flex;
-  background: #4a4a4a;
+  gap: 2rem;
+  border-bottom: none;
 }
 
 .nav-item {
-  padding: 1rem 2rem;
-  color: #ccc;
+  padding: 0.75rem 0;
   cursor: pointer;
-  position: relative;
+  color: #585858;
+  font-weight: 500;
+  border-bottom: 3px solid transparent;
+  transition: all 0.3s;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+}
+
+.nav-item:hover {
+  color: #21AFFF;
 }
 
 .nav-item.active {
-  background: #333;
-  color: white;
+  color: #21AFFF;
+  border-bottom-color: #21AFFF;
 }
 
 .nav-item .badge {
   margin-right: 0.5rem;
 }
 
-/* Section Title */
+/* Content Wrapper */
+.content-wrapper {
+  max-width: 100%;
+}
+
 .section-title {
-  font-size: 1.5rem;
-  font-weight: 400;
-  color: #333;
-  margin: 2rem 0 1rem 0;
-}
-
-/* Charts Section */
-.chart-container {
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-}
-
-.circular-chart-wrapper {
-  display: flex;
-  justify-content: center;
-}
-
-.circular-chart {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.flights-chart {
-  background: conic-gradient(#4CAF50 0deg 280deg, #e0e0e0 280deg 360deg);
-}
-
-.drones-chart {
-  background: conic-gradient(#2196F3 0deg 200deg, #FF9800 200deg 320deg, #e0e0e0 320deg 360deg);
-}
-
-.chart-center {
-  background: white;
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.chart-number {
-  font-size: 1.5rem;
+  font-size: 1.75rem;
   font-weight: 600;
-  color: #333;
+  color: #03123C;
+  margin-bottom: 1.5rem;
 }
 
-.chart-label {
-  font-size: 0.7rem;
-  color: #666;
-  font-weight: 500;
+/* Charts Grid */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 250px 1.5fr;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  align-items: stretch;
 }
 
-/* Time Selector */
-.time-selector {
+/* Card Styles */
+.card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid #DDDDDD;
+  overflow: hidden;
+  transition: box-shadow 0.3s, transform 0.3s;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  margin-top: 2rem;
 }
 
-.period-btn {
-  background: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 25px;
-  padding: 0.75rem 1.5rem;
-  color: #666;
+.card:hover {
+  box-shadow: 0 4px 16px rgba(33, 175, 255, 0.15);
+  transform: translateY(-2px);
+}
+
+.card-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid #DDDDDD;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.card-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #03123C;
+  margin: 0;
+}
+
+.card-body {
+  padding: 1.5rem;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Pie Charts Card */
+.pie-charts-card {
+  grid-column: 1;
+}
+
+.pie-charts-card .card-body {
+  justify-content: center;
+}
+
+.charts-horizontal {
+  display: flex;
+  flex-direction: row;
+  gap: 2rem;
+  align-items: flex-start;
+  justify-content: space-around;
+  height: 100%;
+}
+
+.chart-item {
+  flex: 1;
+  min-width: 0; /* Allow items to shrink */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.chart-subtitle {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #03123C;
+  margin-bottom: 1rem;
   text-align: center;
 }
 
-.period-btn.active {
-  background: #333;
-  color: white;
-  border-color: #333;
+.purpose-pie-chart {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-/* Bar Chart */
-.bar-chart-container {
+.pie-svg {
+  width: 100%;
+  height: auto;
+  max-width: 200px;
+  margin: 0 auto 1rem;
+  display: block;
+}
+
+.pie-segment {
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.pie-segment:hover {
+  opacity: 0.8;
+}
+
+.pie-center-number {
+  font-size: 28px;
+  font-weight: 700;
+  fill: #03123C;
+}
+
+.pie-center-label {
+  font-size: 12px;
+  fill: #585858;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pie-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0;
+  width: 100%;
+  max-width: 250px;
+}
+
+.legend-item-pie {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  padding: 0.25rem 0;
+}
+
+.legend-color-box {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.legend-text {
+  color: #555;
+  line-height: 1.4;
+  font-weight: 500;
+  flex: 1;
+}
+
+/* Period Card */
+.period-card {
+  grid-column: 2;
+}
+
+.period-card .card-body {
+  justify-content: center;
+}
+
+.period-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.period-btn {
+  width: 100%;
+  padding: 1rem 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border: 2px solid #DDDDDD;
   background: white;
-  padding: 1.5rem;
+  color: #585858;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: all 0.3s;
+  text-align: center;
+}
+
+.period-btn:hover {
+  border-color: #21AFFF;
+  background: #FFFFFF;
+  color: #21AFFF;
+}
+
+.period-btn.active {
+  background: linear-gradient(135deg, #21AFFF 0%, #03123C 100%);
+  border-color: #21AFFF;
+  color: white;
+  box-shadow: 0 4px 12px rgba(33, 175, 255, 0.3);
+}
+
+/* Chart Card */
+.chart-card {
+  grid-column: 3;
+}
+
+.chart-card .card-body {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0.5rem;
 }
 
 .chart-legend {
   display: flex;
-  gap: 2rem;
-  margin-bottom: 1rem;
+  gap: 1.5rem;
+  align-items: center;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   color: #666;
+  font-weight: 500;
 }
 
 .legend-color {
-  width: 12px;
+  width: 20px;
   height: 12px;
-  border-radius: 2px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .legend-color.flying-time {
-  background: #4CAF50;
+  background: linear-gradient(to right, #4CAF50, #66BB6A);
 }
 
 .legend-color.flight-count {
-  background: #2196F3;
+  background: linear-gradient(to right, #2196F3, #42A5F5);
 }
 
+/* Bar Chart */
 .bar-chart {
   position: relative;
-  height: 350px;
-  padding-top: 1rem;
-  padding-bottom: 4rem;
+  height: 100%;
+  min-height: 300px;
+  flex: 1;
+  margin-top: 1rem;
 }
 
 .chart-grid {
   position: absolute;
   top: 1rem;
-  left: 2rem;
-  right: 2rem;
+  left: 2.5rem;
+  right: 2.5rem;
   bottom: 4rem;
   display: flex;
   flex-direction: column;
@@ -856,7 +1209,7 @@ export default {
 .grid-line {
   width: 100%;
   height: 1px;
-  background: #e0e0e0;
+  background: #f0f0f0;
 }
 
 .chart-bars {
@@ -864,8 +1217,8 @@ export default {
   align-items: flex-end;
   justify-content: space-evenly;
   height: 100%;
-  gap: 0.25rem;
-  padding: 0 2rem 0 2rem;
+  gap: 0.5rem;
+  padding: 0 2.5rem 4rem;
   position: relative;
 }
 
@@ -874,7 +1227,7 @@ export default {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   position: relative;
   max-width: 50px;
   height: 100%;
@@ -882,15 +1235,16 @@ export default {
 }
 
 .bar-group:hover .bar {
-  opacity: 0.8;
+  opacity: 0.85;
+  transform: scaleY(1.02);
 }
 
 .bar {
-  width: 12px;
+  width: 14px;
   min-height: 3px;
-  border-radius: 3px 3px 0 0;
+  border-radius: 4px 4px 0 0;
   transition: all 0.3s ease;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .bar[data-value="0"] {
@@ -903,7 +1257,7 @@ export default {
 }
 
 .flying-time-bar[data-value]:not([data-value="0"]) {
-  min-height: 8px;
+  min-height: 10px;
 }
 
 .flight-count-bar {
@@ -911,41 +1265,28 @@ export default {
 }
 
 .flight-count-bar[data-value]:not([data-value="0"]) {
-  min-height: 8px;
-}
-
-.bar-label {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 10px;
-  transform: rotate(-45deg);
-  transform-origin: top left;
-  font-size: 0.65rem;
-  color: #666;
-  white-space: nowrap;
-  font-weight: 500;
+  min-height: 10px;
 }
 
 .chart-x-labels {
   position: absolute;
-  left: 2rem;
-  right: 2rem;
+  left: 2.5rem;
+  right: 2.5rem;
   bottom: 0;
   height: 4rem;
   display: flex;
   justify-content: space-evenly;
   align-items: flex-start;
-  padding-top: 30px;
+  padding-top: 35px;
 }
 
 .x-label {
   flex: 1;
   max-width: 50px;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   color: #666;
   white-space: nowrap;
-  font-weight: 500;
+  font-weight: 600;
   transform: rotate(-45deg);
   transform-origin: top left;
 }
@@ -968,97 +1309,191 @@ export default {
   justify-content: space-between;
   font-size: 0.75rem;
   color: #999;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .y-axis-right {
   text-align: right;
 }
 
-/* Flights Section */
-.flights-section {
-  background: white;
-  padding: 2rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+/* Flights Card */
+.flights-card {
+  grid-column: 1 / -1;
 }
 
 .flights-table {
   margin: 0;
+  width: 100%;
 }
 
 .flights-table thead th {
   border-top: none;
-  border-bottom: 2px solid #e9ecef;
+  border-bottom: 2px solid #f0f0f0;
   font-weight: 600;
   color: #666;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   padding: 1rem 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .flights-table tbody td {
-  padding: 1rem 0.75rem;
-  border-top: 1px solid #f0f0f0;
+  padding: 1.25rem 0.75rem;
+  border-top: 1px solid #f5f5f5;
   vertical-align: middle;
+  font-size: 0.9rem;
+}
+
+.flight-row {
+  transition: background-color 0.2s;
 }
 
 .flight-row:hover {
-  background-color: #f8f9fa;
+  background-color: #f8f9ff;
 }
 
 .aircraft-info {
   display: flex;
   align-items: center;
+  font-weight: 500;
 }
 
 .purpose-badge {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
   font-size: 0.8rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
+  padding: 0.4rem 1rem;
+  border-radius: 20px;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
 }
 
 .action-buttons {
   display: flex;
-  gap: 0.25rem;
+  gap: 0.5rem;
 }
 
 .btn-dark {
-  background: #333;
-  border-color: #333;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  font-weight: 600;
+  padding: 0.625rem 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  transition: all 0.3s;
 }
 
 .btn-dark:hover {
-  background: #222;
-  border-color: #222;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
 /* Responsive Design */
+@media (max-width: 1200px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .pie-charts-card,
+  .period-card,
+  .chart-card {
+    grid-column: 1;
+  }
+  
+  .period-buttons {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  
+  .period-btn {
+    flex: 1;
+    min-width: 120px;
+  }
+}
+
 @media (max-width: 768px) {
   .dashboard-container {
     padding: 1rem;
   }
   
-  .header-section {
-    padding: 1.5rem;
+  .header-content {
+    flex-direction: column;
+    align-items: flex-start;
   }
   
-  .top-stats {
+  .header-stats {
+    width: 100%;
     flex-direction: column;
     gap: 1rem;
   }
   
-  .stat-item {
-    min-width: auto;
+  .stat-card {
+    width: 100%;
   }
   
   .company-name {
     font-size: 2rem;
   }
   
-  .chart-bars {
+  .nav-tabs-custom {
+    overflow-x: auto;
+    gap: 1rem;
+  }
+  
+  .charts-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .charts-horizontal {
+    flex-direction: column;
+    gap: 2rem;
+  }
+  
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  
+  .chart-legend {
+    flex-direction: column;
+    align-items: flex-start;
     gap: 0.5rem;
+  }
+  
+  .bar-chart {
+    height: 250px;
+  }
+  
+  .flights-table {
+    font-size: 0.85rem;
+  }
+  
+  .flights-table thead th,
+  .flights-table tbody td {
+    padding: 0.75rem 0.5rem;
+  }
+}
+
+@media (max-width: 576px) {
+  .header-card,
+  .nav-card,
+  .card {
+    border-radius: 8px;
+    padding: 1rem;
+  }
+  
+  .card-body {
+    padding: 1rem;
+  }
+  
+  .period-buttons {
+    flex-direction: column;
+  }
+  
+  .period-btn {
+    width: 100%;
   }
 }
 </style>

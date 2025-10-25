@@ -868,21 +868,26 @@ function extractDashboardStats(html, rangeDays = 0) {
       stats.totalAircraft = parseInt(dronesMatch[1]);
     }
     
-    // Pattern 3: Extract purpose/project breakdown from hover data
-    // <div class="text">48: Pre Production Testing</div>
-    // <div class="text">33: Airbound Operations</div>
-    const purposeDataPattern = /<div class="text">(\d+):\s*([^<]+)<\/div>/gi;
-    let purposeMatch;
+    // Pattern 3: Extract purpose/project breakdown from JavaScript DataPoint declarations
+    // Look for flightDataPoint variables (these are for purposes/projects)
+    const flightDataPointPattern = /let flightDataPoint\d+ = new DataPoint\("([^"]+)",\s*(\d+),\s*\d+\);/gi;
+    let flightMatch;
     const purposes = {};
-    while ((purposeMatch = purposeDataPattern.exec(html)) !== null) {
-      const count = parseInt(purposeMatch[1]);
-      const name = purposeMatch[2].trim();
-      if (count > 0) {  // Only include non-zero entries
+    while ((flightMatch = flightDataPointPattern.exec(html)) !== null) {
+      let name = flightMatch[1].trim();
+      // Decode HTML entities like &amp; to &
+      name = name.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      const count = parseInt(flightMatch[2]);
+      if (count > 0) {
         purposes[name] = count;
       }
     }
+    console.log(`🔍 Pattern 3 found ${Object.keys(purposes).length} purpose entries from flightDataPoint:`, purposes);
     if (Object.keys(purposes).length > 0) {
       stats.purposeBreakdown = purposes;
+      console.log('✅ Set purposeBreakdown:', stats.purposeBreakdown);
+    } else {
+      console.log('⚠️ Pattern 3: Could not find flightDataPoint declarations');
     }
     
     // Pattern 4: Extract from JavaScript DataPoint declarations
@@ -963,24 +968,26 @@ function extractDashboardStats(html, rangeDays = 0) {
     
     // Pattern 7: Extract header statistics from stats-container (removed - now in Pattern 1)
     
-    // Pattern 8: Look for aircraft/drone breakdown
-    const droneDataPattern = /<div class="circle two">[\s\S]*?<div class="data-container">([\s\S]*?)<\/div>/i;
-    const droneDataMatch = html.match(droneDataPattern);
-    if (droneDataMatch) {
-      const droneContent = droneDataMatch[1];
-      const droneItemPattern = /<div class="text">(\d+):\s*([^<]+)<\/div>/gi;
-      let droneItemMatch;
-      const drones = {};
-      while ((droneItemMatch = droneItemPattern.exec(droneContent)) !== null) {
-        const count = parseInt(droneItemMatch[1]);
-        const name = droneItemMatch[2].trim();
-        if (count > 0) {
-          drones[name] = count;
-        }
+    // Pattern 8: Extract aircraft/drone breakdown from JavaScript DataPoint declarations
+    // Look for droneDataPoint variables (these are for aircraft)
+    const droneDataPointPattern = /let droneDataPoint\d+ = new DataPoint\("([^"]+)",\s*(\d+),\s*\d+\);/gi;
+    let droneMatch;
+    const drones = {};
+    while ((droneMatch = droneDataPointPattern.exec(html)) !== null) {
+      let name = droneMatch[1].trim();
+      // Decode HTML entities like &amp; to &
+      name = name.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      const count = parseInt(droneMatch[2]);
+      if (count > 0) {
+        drones[name] = count;
       }
-      if (Object.keys(drones).length > 0) {
-        stats.aircraftBreakdown = drones;
-      }
+    }
+    console.log(`🔍 Pattern 8 found ${Object.keys(drones).length} aircraft entries from droneDataPoint:`, drones);
+    if (Object.keys(drones).length > 0) {
+      stats.aircraftBreakdown = drones;
+      console.log('✅ Set aircraftBreakdown:', stats.aircraftBreakdown);
+    } else {
+      console.log('⚠️ Pattern 8: Could not find droneDataPoint declarations');
     }
     
     // Pattern 9: Look for 7-day period specific data
