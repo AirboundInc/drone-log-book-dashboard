@@ -1,0 +1,151 @@
+	
+<!DOCTYPE HTML>
+
+<html>
+	<head>
+    <!-- Skell Lib for row and 12 cols grid -->
+    <link rel="stylesheet" href="/_static/lib/skel-noscript.css" type="text/css" />
+
+	<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Dronelogbook</title>
+<script src="/_static/lib/jquery-3.6.1.min.js"></script>
+<link rel="stylesheet" href="/_static/lib/jquery-ui-1.13.2/jquery-ui.css">
+<script src="/_static/lib/jquery-ui-1.13.2/jquery-ui.min.js"></script>
+
+<link rel="stylesheet" href="/_static/css/main.css?v=20250926">
+<link rel="stylesheet" href="/_static/css/calendar.css">
+<link rel="stylesheet" href="/_static/css/lists.css?v=20250203">
+<link rel="stylesheet" href="/_static/css/specials.css?v=20251030">
+<link rel="stylesheet" href="/_static/css/pop-up.css?v=20241028">
+
+<link rel="stylesheet" href="/_static/css/print.css">
+
+<link rel="stylesheet" href="/_static/css/mobile.css?v=20201110">
+
+<script src="/_static/js/uuid.js"></script>
+<script src="/_static/js/util.js?v=20230829"></script>
+
+<!-- Selectize -->
+<script src="/_static/lib/selectize/standalone/selectize.min.js" type="text/javascript"></script>
+<link rel="stylesheet" href="/_static/lib/selectize/css/selectize.css?v=20250407" type="text/css" />
+
+<!-- TimeAgo -->
+<script src="/_static/lib/jquery.timeago.js"></script>
+
+<!-- DateTime picker -->
+<link rel="stylesheet" href="/_static/lib/flatpickr/flatpickr.min.css">
+<script src="/_static/lib/flatpickr/flatpickr.js"></script>
+
+<!-- Cookie -->
+<script src="/_static/lib/cookie.js" type="text/javascript"></script>
+
+<!-- QRCode -->
+<script src="/_static/lib/qrcode.min.js"></script>
+
+<!-- Country -->
+<link href="/_static/lib/countrySelector/css/bootstrap-formhelpers-countries.flags.css" rel="stylesheet">
+<script src="/_static/lib/countrySelector/bootstrap-formhelpers.min.js?v=20231015"></script>
+
+<!-- Custom Tooltip -->
+<link href="/_static/lib/customtooltip/customtooltip.css" rel="stylesheet">
+<script src="/_static/lib/customtooltip/customtooltip.js"></script>
+
+
+
+
+
+
+
+
+
+
+	<div id="popupConfirm" class="pop-up" style="display: none; z-index: 35000;">
+    <div class="dimmer"></div>
+    <div class="content-container">
+        <div class="close"></div>
+        <div class="fields one">
+                <div class="">
+                    <div class="title"></div>
+                    <div class="message"></div>
+                    <div class="button-container two" align="center">
+                        <div class="button ok default">OK</div>
+                        <div class="button cancel">Cancel</div>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>  
+
+<div id="popupAlert" class="pop-up" style="display: none; z-index: 35000;">
+    <div class="dimmer"></div>
+    <div class="content-container">
+        <div class="close"></div>
+        <div class="fields one">
+            <div class="title">Information</div>
+            <div class="message"></div>
+            <div class="button-container one" align="center">
+                <div class="button cancel">Close</div>
+            </div>
+        </div>
+    </div>
+</div>  
+
+
+<script>
+    function popupConfirm (title, message, okCallback, cancelCallback) {
+        $("#popupConfirm .title").html(title);
+        $("#popupConfirm .message").html(message);
+        //$('.pop-up').hide();
+        $('#popupConfirm').show();
+
+        $('#popupConfirm .close').unbind( "click" );
+        $('#popupConfirm .button.ok').unbind( "click" );
+        $('#popupConfirm .button.cancel').unbind( "click" );
+
+        $('#popupConfirm .close').on('click', function () {
+            $('#popupConfirm').hide();
+        });
+        $('#popupConfirm .button.ok').on('click', function () {
+            if (okCallback!=undefined) okCallback();
+            $('#popupConfirm').hide();
+        });
+        $('#popupConfirm .button.cancel').on('click', function () {
+            if (cancelCallback!=undefined) cancelCallback();
+            $('#popupConfirm').hide();
+        });  
+    }   
+
+    function popupAlert (message, title, closeCallback) {
+        
+        if ( title!=undefined && title!="") { 
+            $("#popupAlert .message").show();
+            $("#popupAlert .title").html(title);
+            $("#popupAlert .message").html(message);
+        } else {
+            $("#popupAlert .title").hide();
+            $("#popupAlert .message").html(message);
+        }
+        //$('.pop-up').hide();
+        $('#popupAlert').show();
+
+        $('#popupAlert .close').unbind( "click" );
+        $('#popupAlert .button.cancel').unbind( "click" );
+
+        $('#popupAlert .close').on('click', function () {
+            if (closeCallback!=undefined) closeCallback();
+            $('#popupAlert').hide();
+        });
+        $('#popupAlert .button.cancel').on('click', function () {
+            if (closeCallback!=undefined) closeCallback();
+            $('#popupAlert').hide();
+        });  
+    }   
+
+</script>
+
+
+
+
+<div class="UIImageViewer" style="display: none; opa

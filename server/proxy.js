@@ -1827,5 +1827,393 @@ app.get('/api/debug/dashboard-html', async (req, res) => {
   }
 });
 
+// Endpoint: /api/drones/inventory
+// Fetches the drone inventory list from Drone Logbook
+app.get('/api/drones/inventory', async (req, res) => {
+  try {
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated. Please login first.' });
+    }
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    // Debug: Check what cookies we have
+    const cookies = await jar.getCookies(SITE_ORIGIN + '/');
+    console.log(`🍪 Current cookies: ${cookies.length} cookies set`);
+    cookies.forEach(cookie => {
+      console.log(`   - ${cookie.key}=${cookie.value.substring(0, 20)}...`);
+    });
+
+    console.log('📥 Fetching drone inventory from dronelogbook.com...');
+    let response;
+    try {
+      // Use relative path since client has prefixUrl set to SITE_ORIGIN
+      response = await client.get('inventory/droneList.php', {
+        followRedirect: true,
+        retry: { limit: 0 }  // Don't retry to avoid infinite redirects
+      });
+      console.log('✅ Got response from Drone Logbook');
+    } catch (fetchErr) {
+      console.error('❌ Fetch failed:', fetchErr.message);
+      console.error('Full error:', fetchErr);
+      
+      // Check if it's a redirect or auth error
+      if (fetchErr.response && fetchErr.response.statusCode === 302) {
+        return res.status(401).json({
+          error: 'Session expired or invalid. Please login again.',
+          details: 'Received redirect from Drone Logbook'
+        });
+      }
+      
+      return res.status(500).json({ 
+        error: 'Failed to fetch from Drone Logbook', 
+        details: fetchErr.message 
+      });
+    }
+
+    if (!response) {
+      console.error('❌ Response is null/undefined');
+      return res.status(500).json({ error: 'No response from server' });
+    }
+
+    console.log(`📊 Response status: ${response.statusCode}`);
+    console.log(`📊 Response has body: ${!!response.body}`);
+    console.log(`📊 Body type: ${typeof response.body}`);
+    console.log(`📊 Body length: ${response.body ? response.body.length : 0}`);
+
+    if (!response.body || response.body.length === 0) {
+      console.error('❌ Response body is empty');
+      console.error('Response statusCode:', response.statusCode);
+      console.error('Response headers:', response.headers);
+      return res.status(404).json({ 
+        error: 'No drone inventory found',
+        statusCode: response.statusCode
+      });
+    }
+
+    // Check if we got an error page instead of the actual inventory page
+    if (response.body.includes('Application Error') || response.body.includes('error-page')) {
+      console.error('❌ Received error page from Drone Logbook');
+      console.error('This usually means: session is invalid, cookies expired, or account has no access');
+      
+      // Save the error page for inspection
+      const fs = require('fs');
+      const path = require('path');
+      const debugPath = path.join(__dirname, 'debug-drones-error.html');
+      fs.writeFileSync(debugPath, response.body, 'utf8');
+      console.log(`📝 Error page saved to: ${debugPath}`);
+      
+      return res.status(401).json({
+        error: 'Authentication failed or session invalid',
+        details: 'Received Application Error page from Drone Logbook. Please log in again.'
+      });
+    }
+
+    // Save debug file
+    const fs = require('fs');
+    const path = require('path');
+    const debugPath = path.join(__dirname, 'debug-drones.html');
+    fs.writeFileSync(debugPath, response.body, 'utf8');
+    console.log(`✅ Drone inventory HTML saved to: ${debugPath}`);
+    console.log(`📊 Response size: ${response.body.length} bytes`);
+    console.log(`📄 First 800 chars: ${response.body.substring(0, 800)}`);
+
+    res.set('Content-Type', 'text/html');
+    res.send(response.body);
+  } catch (err) {
+    console.error('❌ Drone inventory fetch error:', err);
+    console.error('Full error details:', err);
+    res.status(500).json({ error: 'Failed to fetch drone inventory', details: err.message });
+  }
+});
+
+// Debug endpoint to check session and cookies
+app.get('/api/debug/session', async (req, res) => {
+  try {
+    if (!req.session) {
+      return res.json({ 
+        sessionExists: false,
+        message: 'No session'
+      });
+    }
+
+    const hasCookieJar = !!req.session.cookieJarSerialized;
+    let cookieCount = 0;
+    let cookies = [];
+
+    if (hasCookieJar) {
+      const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+      cookies = await jar.getCookies(SITE_ORIGIN + '/');
+      cookieCount = cookies.length;
+    }
+
+    res.json({
+      sessionExists: true,
+      authenticated: !!req.session.authenticated,
+      hasCookieJar,
+      cookieCount,
+      cookies: cookies.map(c => ({ key: c.key, value: c.value.substring(0, 30) + '...' }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Debug endpoint to save drone detail HTML for inspection
+app.get('/api/debug/drone-detail-html', async (req, res) => {
+  try {
+    const droneId = req.query.id;
+
+    if (!droneId) {
+      return res.status(400).json({ error: 'Drone ID (id) parameter is required' });
+    }
+
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}`;
+    console.log(`📥 Fetching drone detail HTML for inspection: ${endpoint}`);
+
+    const response = await client.get(endpoint);
+
+    if (!response || !response.body) {
+      return res.status(404).json({ error: 'Drone detail not found' });
+    }
+
+    // Save the HTML to a file for inspection
+    const fs = require('fs');
+    const path = require('path');
+    const debugPath = path.join(__dirname, `debug-drone-detail-${droneId}.html`);
+    fs.writeFileSync(debugPath, response.body, 'utf8');
+    
+    console.log(`✅ Drone detail HTML saved to: ${debugPath}`);
+    console.log(`📊 File size: ${response.body.length} bytes`);
+    console.log(`📄 Preview (first 2000 chars):\n${response.body.substring(0, 2000)}`);
+
+    res.json({
+      success: true,
+      savedTo: debugPath,
+      size: response.body.length,
+      preview: response.body.substring(0, 1000)
+    });
+  } catch (err) {
+    console.error('❌ Debug endpoint error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Endpoint: /api/drones/detail
+// Fetches a specific drone's detail page
+app.get('/api/drones/detail', async (req, res) => {
+  try {
+    const droneId = req.query.id;
+
+    if (!droneId) {
+      return res.status(400).json({ error: 'Drone ID (id) parameter is required' });
+    }
+
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    // Use relative path since client has prefixUrl set to SITE_ORIGIN
+    const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}&filter_year=2025&action=&currentGUID=&menu=flightBlock`;
+    console.log(`📥 Fetching drone detail from: ${endpoint}`);
+
+    const response = await client.get(endpoint);
+
+    if (!response || !response.body) {
+      return res.status(404).json({ error: 'Drone detail not found' });
+    }
+
+    console.log(`✅ Drone detail fetched, size: ${response.body.length} bytes`);
+
+    res.set('Content-Type', 'text/html');
+    res.send(response.body);
+  } catch (err) {
+    console.error('❌ Drone detail fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch drone detail', details: err.message });
+  }
+});
+
+// Endpoint: /api/drones/detail-page
+// Fetches a specific page of drone flights (POST with pagination)
+app.post('/api/drones/detail-page', async (req, res) => {
+  try {
+    const { droneId, pageNumber } = req.body;
+
+    if (!droneId) {
+      return res.status(400).json({ error: 'Drone ID is required' });
+    }
+
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    console.log(`📥 Fetching drone detail page ${pageNumber || 1} for drone: ${droneId}`);
+    
+    // The trick: we need to use GET with both id AND pagination parameters
+    const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}&filter_year=2025&action=&currentGUID=&menu=flightBlock&flightPagination=${encodeURIComponent(pageNumber || 1)}`;
+    
+    console.log(`� Endpoint URL: ${endpoint}`);
+
+    const response = await client.get(endpoint);
+
+    if (!response || !response.body) {
+      return res.status(404).json({ error: 'Drone detail page not found' });
+    }
+
+    console.log(`✅ Drone detail page fetched, size: ${response.body.length} bytes`);
+
+    res.set('Content-Type', 'text/html');
+    res.send(response.body);
+  } catch (err) {
+    console.error('❌ Drone detail page fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch drone detail page', details: err.message });
+  }
+});
+
+// Endpoint: /api/flights/download-log
+// Downloads a flight log (.bin file) by flight ID
+  app.get('/api/flights/download-log', async (req, res) => {
+  try {
+    const flightId = req.query.flightId;
+    console.log(`\n📥 GET /api/flights/download-log requested with flightId: ${flightId}`);
+
+    if (!flightId) {
+      return res.status(400).json({ error: 'Flight ID (flightId) parameter is required' });
+    }
+
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated - please log in first' });
+    }
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    // Step 1: Fetch the flight detail page
+    const flightEndpoint = `flight/flightDetail.php?id=${encodeURIComponent(flightId)}`;
+    console.log(`1️⃣ Fetching flight detail page...`);
+
+    const flightPageResponse = await client.get(flightEndpoint);
+    if (!flightPageResponse || !flightPageResponse.body) {
+      return res.status(404).json({ error: 'Flight detail page not found' });
+    }
+
+    // Step 2: Try to find the download link in the static HTML
+    console.log(`2️⃣ Searching for download link...`);
+    
+    let downloadUrl = null;
+    
+    // Try multiple regex patterns to find the URL
+    const patterns = [
+      /location\s*=\s*['"](\/uploadFile\/viewFile\.php\?[^'"]+)['"]/i,  // onClick location handler
+      /\/uploadFile\/viewFile\.php\?id=[^&\s<>"']+&bucket=[^&\s<>"']+&disposition=[^&\s<>"']+&filename=[^<>"'\s]+/,  // Full URL with all params
+      /\/uploadFile\/viewFile\.php\?[^<>\s"']+/,  // Basic pattern
+      /href=["']([^"']*uploadFile\/viewFile[^"']*)["']/i,  // href attribute
+    ];
+    
+    for (const pattern of patterns) {
+      const match = flightPageResponse.body.match(pattern);
+      if (match) {
+        downloadUrl = match[1] || match[0];
+        if (downloadUrl.startsWith('location')) {
+          // Extract from location handler
+          downloadUrl = downloadUrl.match(/['"](\/[^'"]+)['"]/)[1];
+        }
+        console.log(`✅ Found link (pattern ${patterns.indexOf(pattern) + 1})`);
+        break;
+      }
+    }
+    
+    // If not found in static HTML, use Puppeteer as fallback
+    if (!downloadUrl) {
+      console.log(`3️⃣ Not found in HTML, trying Puppeteer...`);
+      try {
+        const puppeteer = require('puppeteer');
+        const browser = await puppeteer.launch({ 
+          headless: 'new',
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        });
+        
+        const page = await browser.newPage();
+        
+        // Copy cookies
+        const cookieArray = [];
+        if (jar.toJSON && jar.toJSON().cookies) {
+          jar.toJSON().cookies.forEach(cookie => {
+            cookieArray.push({
+              name: cookie.key,
+              value: cookie.value,
+              domain: cookie.domain || 'dronelogbook.com',
+              path: cookie.path || '/',
+              secure: true,
+              httpOnly: true
+            });
+          });
+        }
+        if (cookieArray.length > 0) {
+          await page.setCookie(...cookieArray);
+        }
+        
+        const flightUrl = `https://www.dronelogbook.com/flight/flightDetail.php?id=${encodeURIComponent(flightId)}`;
+        await page.goto(flightUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        downloadUrl = await page.evaluate(() => {
+          const links = document.querySelectorAll('a[href*="uploadFile/viewFile"]');
+          if (links.length > 0) return links[0].href;
+          
+          const html = document.documentElement.outerHTML;
+          const match = html.match(/uploadFile\/viewFile\.php\?[^"'<>\s]+/);
+          return match ? match[0] : null;
+        });
+        
+        await browser.close();
+        
+        if (downloadUrl) {
+          console.log(`✅ Found via Puppeteer`);
+        }
+      } catch (puppeteerErr) {
+        console.error('⚠️ Puppeteer failed:', puppeteerErr.message);
+      }
+    }
+    
+    if (!downloadUrl) {
+      return res.status(404).json({ error: 'Download link not found' });
+    }
+
+    // Step 3: Build the full URL
+    let fullUrl = downloadUrl;
+    if (!fullUrl.startsWith('http')) {
+      fullUrl = `${SITE_ORIGIN}/${fullUrl}`;
+    }
+    
+    fullUrl = fullUrl
+      .replace(/&amp;/g, '&')
+      .replace(/&#x27;/g, "'")
+      .replace(/&quot;/g, '"');
+    
+    console.log(`4️⃣ Returning download URL`);
+    
+    return res.json({ downloadUrl: fullUrl });
+    
+  } catch (err) {
+    console.error('❌ Download error:', err.message);
+    res.status(500).json({ error: 'Failed to get download link', details: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Auth proxy listening on http://localhost:${PORT}`));
