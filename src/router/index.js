@@ -4,6 +4,8 @@ import SimpleDashboard from '@/views/SimpleDashboard.vue'
 import Dashboard from '@/views/Dashboard.vue'
 import FlightAnalysis from '@/views/FlightAnalysis.vue'
 import FlightComparison from '@/views/FlightComparison.vue'
+import DroneInventory from '@/components/DroneInventory.vue'
+import DroneDetail from '@/components/DroneDetail.vue'
 
 const routes = [
   {
@@ -20,6 +22,17 @@ const routes = [
     path: '/full',
     name: 'FullDashboard',
     component: Dashboard
+  },
+  {
+    path: '/drones',
+    name: 'DroneInventory',
+    component: DroneInventory
+  },
+  {
+    path: '/drone/:id',
+    name: 'DroneDetail',
+    component: DroneDetail,
+    props: true
   },
   {
     path: '/flight/:id',

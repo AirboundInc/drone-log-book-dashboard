@@ -5,6 +5,12 @@ const cors = require('cors');
 const got = require('got');
 const { CookieJar } = require('tough-cookie');
 const querystring = require('querystring');
+const archiver = require('archiver');
+const stream = require('stream');
+
+// In-memory cache for downloaded files (avoid session storage issues)
+const downloadCache = new Map();
+const CACHE_EXPIRY = 10 * 60 * 1000; // 10 minutes
 
 // Function to extract flight data from dronelogbook.com HTML
 function extractFlightDataFromHTML(html, rangeDays = 0) {
@@ -2012,6 +2018,7 @@ app.get('/api/debug/drone-detail-html', async (req, res) => {
 app.get('/api/drones/detail', async (req, res) => {
   try {
     const droneId = req.query.id;
+    const pageNumber = req.query.page || 1;
 
     if (!droneId) {
       return res.status(400).json({ error: 'Drone ID (id) parameter is required' });
@@ -2024,9 +2031,9 @@ app.get('/api/drones/detail', async (req, res) => {
     const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
     const client = getClientWithJar(jar);
 
-    // Use relative path since client has prefixUrl set to SITE_ORIGIN
-    const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}&filter_year=2025&action=&currentGUID=&menu=flightBlock`;
-    console.log(`📥 Fetching drone detail from: ${endpoint}`);
+    // Use GET with pagination parameter
+    const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}&filter_year=2025&action=&currentGUID=&menu=flightBlock&flightPagination=${pageNumber}`;
+    console.log(`📥 Fetching drone detail (page ${pageNumber}) from: ${endpoint}`);
 
     const response = await client.get(endpoint);
 
@@ -2045,10 +2052,11 @@ app.get('/api/drones/detail', async (req, res) => {
 });
 
 // Endpoint: /api/drones/detail-page
-// Fetches a specific page of drone flights (POST with pagination)
-app.post('/api/drones/detail-page', async (req, res) => {
+// Fetches a specific page of drone flights (POST with form data)
+app.get('/api/drones/detail-page', async (req, res) => {
   try {
-    const { droneId, pageNumber } = req.body;
+    const droneId = req.query.droneId;
+    const pageNumber = req.query.pageNumber || 1;
 
     if (!droneId) {
       return res.status(400).json({ error: 'Drone ID is required' });
@@ -2061,14 +2069,28 @@ app.post('/api/drones/detail-page', async (req, res) => {
     const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
     const client = getClientWithJar(jar);
 
-    console.log(`📥 Fetching drone detail page ${pageNumber || 1} for drone: ${droneId}`);
+    console.log(`📥 Fetching drone detail page ${pageNumber} for drone: ${droneId}`);
     
-    // The trick: we need to use GET with both id AND pagination parameters
-    const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}&filter_year=2025&action=&currentGUID=&menu=flightBlock&flightPagination=${encodeURIComponent(pageNumber || 1)}`;
+    // Drone Logbook uses POST with id in query string + form data for other params
+    const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}`;
     
-    console.log(`� Endpoint URL: ${endpoint}`);
+    const formData = {
+      filter_year: '2025',
+      action: '',
+      currentGUID: '',
+      menu: 'flightBlock',
+      flightPagination: String(pageNumber)
+    };
+    
+    console.log(`📤 POST to ${endpoint}`);
+    console.log(`📋 Form data:`, JSON.stringify(formData, null, 2));
 
-    const response = await client.get(endpoint);
+    const response = await client.post(endpoint, {
+      form: formData
+    });
+    
+    console.log(`📨 Response status: ${response.statusCode}`);
+    console.log(`📦 Response body length: ${response.body ? response.body.length : 0} bytes`);
 
     if (!response || !response.body) {
       return res.status(404).json({ error: 'Drone detail page not found' });
@@ -2081,6 +2103,134 @@ app.post('/api/drones/detail-page', async (req, res) => {
   } catch (err) {
     console.error('❌ Drone detail page fetch error:', err);
     res.status(500).json({ error: 'Failed to fetch drone detail page', details: err.message });
+  }
+});
+
+// Endpoint: /api/drones/all-flights
+// Fetches all flights from all pages for a drone (streaming response)
+app.get('/api/drones/all-flights', async (req, res) => {
+  try {
+    const droneId = req.query.id;
+
+    if (!droneId) {
+      return res.status(400).json({ error: 'Drone ID is required' });
+    }
+
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    console.log(`📥 Fetching ALL flights for drone: ${droneId}`);
+
+    // Set headers for Server-Sent Events (SSE)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    let currentPage = 1;
+    let hasMore = true;
+    let totalPages = null;
+    const FLIGHTS_PER_PAGE = 20;
+
+    while (hasMore) {
+      try {
+        console.log(`📄 Fetching page ${currentPage}...`);
+        
+        // Use POST with form data (matching the working pagination approach)
+        const endpoint = `inventory/droneDetail.php?id=${encodeURIComponent(droneId)}`;
+        const formData = {
+          filter_year: '2025',
+          action: '',
+          currentGUID: '',
+          menu: 'flightBlock',
+          flightPagination: String(currentPage)
+        };
+
+        console.log(`📤 POST page ${currentPage} with form data`);
+        const response = await client.post(endpoint, {
+          form: formData
+        });
+
+        if (!response || !response.body) {
+          console.log(`⚠️ No response for page ${currentPage}`);
+          break;
+        }
+
+        console.log(`✅ Page ${currentPage} fetched (${response.body.length} bytes)`);
+
+        // On the first page, extract total flights count to calculate total pages
+        if (currentPage === 1 && totalPages === null) {
+          // Look for the flights count in the stats section
+          console.log(`🔍 Searching for total flights count in HTML...`);
+          
+          // Pattern: <p>Flights</p> followed by <strong>163</strong>
+          const flightsPattern = /<p>Flights<\/p>\s*<strong>(\d+)<\/strong>/i;
+          const match = response.body.match(flightsPattern);
+          
+          if (match) {
+            const totalFlights = parseInt(match[1]);
+            totalPages = Math.ceil(totalFlights / FLIGHTS_PER_PAGE);
+            console.log(`📊 Found ${totalFlights} total flights, calculating ${totalPages} pages (${FLIGHTS_PER_PAGE} flights per page)`);
+          } else {
+            console.log(`⚠️ Could not find total flights count in HTML`);
+            console.log(`📄 Searching in first 2000 chars...`);
+            // Try alternative pattern as fallback
+            const altMatch = response.body.match(/<strong>(\d+)<\/strong>/);
+            if (altMatch) {
+              console.log(`Found <strong> tag with number: ${altMatch[1]}`);
+            }
+          }
+        }
+
+        // Send the HTML to the frontend for parsing
+        res.write(`data: ${JSON.stringify({ 
+          page: currentPage, 
+          html: response.body,
+          timestamp: Date.now()
+        })}\n\n`);
+
+        // Check if we should continue to next page
+        if (totalPages !== null) {
+          // We know the exact number of pages
+          if (currentPage >= totalPages) {
+            console.log(`✅ Reached page ${currentPage} of ${totalPages}, stopping`);
+            hasMore = false;
+          } else {
+            currentPage++;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } else {
+          // Fallback: check if page has flights
+          const flightCount = (response.body.match(/\/flight\/flightDetail\.php\?id=/g) || []).length;
+          if (flightCount === 0) {
+            console.log(`✅ No flights on page ${currentPage}, stopping`);
+            hasMore = false;
+          } else {
+            currentPage++;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+
+      } catch (pageErr) {
+        console.error(`❌ Error fetching page ${currentPage}:`, pageErr.message);
+        hasMore = false;
+      }
+    }
+
+    // Send completion signal
+    res.write(`data: ${JSON.stringify({ done: true, totalPages: currentPage })}\n\n`);
+    res.end();
+
+    console.log(`✅ Finished fetching all ${currentPage} pages`);
+
+  } catch (err) {
+    console.error('❌ All flights fetch error:', err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
   }
 });
 
@@ -2212,6 +2362,675 @@ app.post('/api/drones/detail-page', async (req, res) => {
   } catch (err) {
     console.error('❌ Download error:', err.message);
     res.status(500).json({ error: 'Failed to get download link', details: err.message });
+  }
+});
+
+// Endpoint: /api/flights/download-all-logs
+// Creates ZIP from cached files (after progress tracking downloads them)
+app.get('/api/flights/download-all-logs', async (req, res) => {
+  try {
+    const downloadToken = req.query.downloadToken;
+    console.log(`\n📦 GET /api/flights/download-all-logs requested with token: ${downloadToken}`);
+
+    if (!downloadToken) {
+      return res.status(400).json({ error: 'Download token is required' });
+    }
+
+    const cachedData = downloadCache.get(downloadToken);
+    if (!cachedData) {
+      console.log(`❌ Download token not found: ${downloadToken}`);
+      return res.status(404).json({ error: 'Download not found or expired. Please try downloading again.' });
+    }
+
+    const downloadedFiles = cachedData.files;
+    console.log(`📦 Creating ZIP from ${downloadedFiles.length} cached files`);
+
+    // Create zip file and stream it
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="all-logs-${Date.now()}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 1 } });
+    archive.pipe(res);
+
+    // Add all files to ZIP from cache
+    for (const file of downloadedFiles) {
+      archive.append(file.buffer, { name: file.filename });
+      console.log(`   ✅ Added: "${file.filename}" (${(file.buffer.length / 1024).toFixed(1)} KB)`);
+    }
+
+    console.log(`\n📦 Finalizing ZIP with ${downloadedFiles.length} files`);
+    await archive.finalize();
+    
+    // Clean up cache immediately after download starts
+    downloadCache.delete(downloadToken);
+    console.log(`🗑️ Cleaned up cache for token: ${downloadToken}`);
+
+  } catch (err) {
+    console.error('❌ Download all logs error:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to download all logs', details: err.message });
+    }
+  }
+});
+
+// Endpoint: /api/flights/download-all-logs-progress
+// Streams progress updates while downloading all logs
+app.get('/api/flights/download-all-logs-progress', async (req, res) => {
+  try {
+    const droneId = req.query.droneId;
+    console.log(`\n📡 GET /api/flights/download-all-logs-progress requested for drone: ${droneId}`);
+
+    if (!droneId) {
+      return res.status(400).json({ error: 'Drone ID (droneId) parameter is required' });
+    }
+
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    // Set up Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    // Step 1: Fetch all flight IDs
+    console.log(`📥 Fetching all flights for drone: ${droneId}`);
+    res.write(`data: ${JSON.stringify({
+      type: 'progress',
+      current: 0,
+      message: 'Fetching flight list...'
+    })}\n\n`);
+
+    const allFlights = [];
+    let currentPage = 1;
+    let totalPages = null;
+    const FLIGHTS_PER_PAGE = 20;
+
+    const firstPageResponse = await client.post(`inventory/droneDetail.php?id=${encodeURIComponent(droneId)}`, {
+      form: {
+        filter_year: '2025',
+        action: '',
+        currentGUID: '',
+        menu: 'flightBlock',
+        flightPagination: '1'
+      }
+    });
+
+    const flightsPattern = /<p>Flights<\/p>\s*<strong>(\d+)<\/strong>/i;
+    const match = firstPageResponse.body.match(flightsPattern);
+    if (match) {
+      const totalFlights = parseInt(match[1]);
+      totalPages = Math.ceil(totalFlights / FLIGHTS_PER_PAGE);
+      console.log(`📊 Found ${totalFlights} total flights across ${totalPages} pages`);
+    }
+
+    for (let page = 1; page <= (totalPages || 1); page++) {
+      const pageResponse = page === 1 ? firstPageResponse : await client.post(`inventory/droneDetail.php?id=${encodeURIComponent(droneId)}`, {
+        form: {
+          filter_year: '2025',
+          action: '',
+          currentGUID: '',
+          menu: 'flightBlock',
+          flightPagination: String(page)
+        }
+      });
+
+      const flightIdPattern = /\/flight\/flightDetail\.php\?id=([A-F0-9\-]+)/gi;
+      let idMatch;
+      const seenIds = new Set();
+      while ((idMatch = flightIdPattern.exec(pageResponse.body)) !== null) {
+        const flightId = idMatch[1];
+        if (!seenIds.has(flightId)) {
+          seenIds.add(flightId);
+          allFlights.push(flightId);
+        }
+      }
+    }
+
+    console.log(`✅ Found ${allFlights.length} unique flights`);
+    
+    // Step 2: Download each flight with progress updates
+    let successCount = 0;
+    let errorCount = 0;
+    const downloadedFiles = [];
+
+    for (let i = 0; i < allFlights.length; i++) {
+      const flightId = allFlights[i];
+      const current = i + 1;
+      
+      console.log(`\n📥 [${current}/${allFlights.length}] Processing flight: ${flightId}`);
+      
+      try {
+        res.write(`data: ${JSON.stringify({
+          type: 'progress',
+          current,
+          total: allFlights.length,
+          message: `[${current}/${allFlights.length}] Fetching flight details...`,
+          flightId
+        })}\n\n`);
+
+        const flightResponse = await client.get(`flight/flightDetail.php?id=${encodeURIComponent(flightId)}`);
+        
+        if (flightResponse.statusCode !== 200) {
+          errorCount++;
+          console.log(`   ❌ HTTP ${flightResponse.statusCode}`);
+          res.write(`data: ${JSON.stringify({
+            type: 'error',
+            current,
+            flightId,
+            message: `HTTP ${flightResponse.statusCode}`
+          })}\n\n`);
+          continue;
+        }
+
+        // Extract flight name (simplified version)
+        let flightName = null;
+        const inputPattern = /<input[^>]+name=["']flight_name["'][^>]+value=["']([^"']+)["']/i;
+        const inputMatch = flightResponse.body.match(inputPattern);
+        if (inputMatch && inputMatch[1] && !inputMatch[1].match(/^[A-F0-9-]{36}$/i)) {
+          flightName = inputMatch[1].trim();
+          if (!flightName.toLowerCase().includes('log out') && flightName.length >= 3) {
+            console.log(`   ✅ Flight name: ${flightName}`);
+          } else {
+            flightName = null;
+          }
+        }
+
+        const downloadPattern = /location\s*=\s*['"](\/uploadFile\/viewFile\.php\?[^'"]+)['"]/i;
+        const downloadMatch = flightResponse.body.match(downloadPattern);
+
+        if (downloadMatch) {
+          let downloadPath = downloadMatch[1].replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"');
+          if (downloadPath.startsWith('/')) {
+            downloadPath = downloadPath.substring(1);
+          }
+          
+          console.log(`   Downloading from: ${downloadPath.substring(0, 80)}...`);
+
+          // Download without SSE updates during download for speed
+          const fileResponse = await client.get(downloadPath, {
+            responseType: 'buffer',
+            followRedirect: true,
+            maxRedirects: 5,
+            throwHttpErrors: false,
+            headers: {
+              'Accept': 'application/octet-stream, */*',
+              'Referer': `https://www.dronelogbook.com/flight/flightDetail.php?id=${encodeURIComponent(flightId)}`
+            }
+          }).on('downloadProgress', progress => {
+            // Only show terminal progress, no SSE updates during download for speed
+            const percent = progress.percent ? (progress.percent * 100).toFixed(1) : '?';
+            const transferred = (progress.transferred / 1024).toFixed(1);
+            const total = progress.total ? (progress.total / 1024).toFixed(1) : '?';
+            process.stdout.write(`\r   Progress: ${percent}% (${transferred}/${total} KB)`);
+          });
+          
+          console.log('');
+
+          if (fileResponse.statusCode === 200 && fileResponse.body && fileResponse.body.length > 0) {
+            const buffer = Buffer.isBuffer(fileResponse.body) ? fileResponse.body : Buffer.from(fileResponse.body);
+            
+            const contentDisposition = fileResponse.headers['content-disposition'];
+            let filenameFromHeader = null;
+            if (contentDisposition) {
+              const cdMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+              if (cdMatch && cdMatch[1]) {
+                filenameFromHeader = cdMatch[1].replace(/['"]/g, '');
+              }
+            }
+            
+            let filename;
+            if (flightName && !flightName.match(/^[A-F0-9-]{36}$/i)) {
+              const safeName = flightName.replace(/[<>:"/\\|?*]/g, '_');
+              const ext = filenameFromHeader ? filenameFromHeader.split('.').pop() : 'bin';
+              filename = `${safeName}.${ext}`;
+            } else if (filenameFromHeader) {
+              filename = filenameFromHeader;
+            } else {
+              const filenameMatch = downloadPath.match(/filename=([^&]+)/);
+              filename = filenameMatch ? decodeURIComponent(filenameMatch[1]) : `flight_${flightId}.bin`;
+            }
+            
+            downloadedFiles.push({ buffer, filename });
+            successCount++;
+            console.log(`   ✅ Success (${(buffer.length / 1024).toFixed(1)} KB)`);
+            res.write(`data: ${JSON.stringify({
+              type: 'success',
+              current,
+              flightId,
+              fileName: flightName,
+              fileSize: `${(buffer.length / 1024).toFixed(1)} KB`
+            })}\n\n`);
+          } else {
+            errorCount++;
+            console.log(`   ❌ Failed to download file`);
+            res.write(`data: ${JSON.stringify({
+              type: 'error',
+              current,
+              flightId,
+              message: 'Failed to download file'
+            })}\n\n`);
+          }
+        } else {
+          errorCount++;
+          console.log(`   ❌ No download link found`);
+          res.write(`data: ${JSON.stringify({
+            type: 'error',
+            current,
+            flightId,
+            message: 'No download link found'
+          })}\n\n`);
+        }
+        
+      } catch (err) {
+        errorCount++;
+        console.error(`   ❌ Error: ${err.message}`);
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          current,
+          flightId,
+          message: err.message
+        })}\n\n`);
+      }
+    }
+
+    // Store files and send completion with token
+    const downloadToken = `dl_all_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    downloadCache.set(downloadToken, {
+      files: downloadedFiles,
+      timestamp: Date.now()
+    });
+    
+    setTimeout(() => {
+      downloadCache.delete(downloadToken);
+      console.log(`🗑️ Cleaned up download token: ${downloadToken}`);
+    }, CACHE_EXPIRY);
+    
+    console.log(`💾 Cached ${downloadedFiles.length} files with token: ${downloadToken}`);
+    
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      successCount,
+      errorCount,
+      total: allFlights.length,
+      downloadToken
+    })}\n\n`);
+
+    res.end();
+
+  } catch (err) {
+    console.error('❌ Download all logs progress error:', err.message);
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: err.message
+    })}\n\n`);
+    res.end();
+  }
+});
+
+// Endpoint: /api/flights/download-selected-logs-progress
+// Streams progress updates while preparing the download
+app.get('/api/flights/download-selected-logs-progress', async (req, res) => {
+  try {
+    const flightIds = req.query.flightIds;
+    console.log(`\n📡 GET /api/flights/download-selected-logs-progress requested`);
+
+    if (!flightIds) {
+      return res.status(400).json({ error: 'Flight IDs (flightIds) parameter is required' });
+    }
+
+    if (!req.session || !req.session.cookieJarSerialized) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    // Set up Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const jar = await CookieJar.deserialize(req.session.cookieJarSerialized);
+    const client = getClientWithJar(jar);
+
+    // Parse flight IDs from comma-separated string
+    const selectedFlightIds = flightIds.split(',').map(id => id.trim()).filter(id => id);
+    console.log(`📥 Processing ${selectedFlightIds.length} selected flights for progress tracking`);
+
+    let successCount = 0;
+    let errorCount = 0;
+    
+    // Store downloaded files in memory for ZIP creation
+    const downloadedFiles = [];
+
+    // Process each flight sequentially (for progress tracking)
+    for (let i = 0; i < selectedFlightIds.length; i++) {
+      const flightId = selectedFlightIds[i];
+      const current = i + 1;
+      
+      console.log(`\n📥 [${current}/${selectedFlightIds.length}] Processing flight: ${flightId}`);
+      
+      try {
+        // Send progress update - fetching flight details
+        res.write(`data: ${JSON.stringify({
+          type: 'progress',
+          current,
+          total: selectedFlightIds.length,
+          message: `[${current}/${selectedFlightIds.length}] Fetching flight details...`,
+          flightId
+        })}\n\n`);
+        
+        console.log(`   Fetching flight details...`);
+
+        // Get flight details
+        const flightResponse = await client.get(`flight/flightDetail.php?id=${encodeURIComponent(flightId)}`);
+        
+        console.log(`   Flight response status: ${flightResponse.statusCode}`);
+        
+        if (flightResponse.statusCode !== 200) {
+          errorCount++;
+          console.log(`   ❌ HTTP ${flightResponse.statusCode}`);
+          res.write(`data: ${JSON.stringify({
+            type: 'error',
+            current,
+            flightId,
+            message: `HTTP ${flightResponse.statusCode}`
+          })}\n\n`);
+          continue;
+        }
+
+        // Extract flight name - try multiple patterns
+        let flightName = null;
+        const htmlSnippet = flightResponse.body.substring(0, 5000);
+        
+        // Pattern 1: Look for page title or h1/h2 heading with "Flight"
+        let titlePattern = /<h[12][^>]*>(Flight[^<]+)<\/h[12]>/i;
+        let titleMatch = flightResponse.body.match(titlePattern);
+        if (titleMatch && titleMatch[1]) {
+          flightName = titleMatch[1].trim();
+          console.log(`   ✅ Pattern 1 matched: ${flightName}`);
+        }
+        
+        // Pattern 2: Look for flight_name input field
+        if (!flightName) {
+          const inputPattern = /<input[^>]+name=["']flight_name["'][^>]+value=["']([^"']+)["']/i;
+          const inputMatch = flightResponse.body.match(inputPattern);
+          if (inputMatch && inputMatch[1] && !inputMatch[1].match(/^[A-F0-9-]{36}$/i)) {
+            flightName = inputMatch[1].trim();
+            console.log(`   ✅ Pattern 2 matched: ${flightName}`);
+          }
+        }
+        
+        // Pattern 3: Look for "Flight YYYY-MM-DD HH:MM:SS" format
+        if (!flightName) {
+          const datePattern = /Flight\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/i;
+          const dateMatch = flightResponse.body.match(datePattern);
+          if (dateMatch) {
+            flightName = dateMatch[0].trim();
+            console.log(`   ✅ Pattern 3 matched: ${flightName}`);
+          }
+        }
+        
+        // Pattern 4: Common patterns in first 5000 chars
+        if (!flightName) {
+          const commonPatterns = [
+            /<title>([^<]*Flight[^<]*)<\/title>/i,
+            /Flight Name[:\s]*([^<\n]+)/i,
+            /<strong>([^<]*Flight[^<]*)<\/strong>/i
+          ];
+          
+          for (const pattern of commonPatterns) {
+            const match = htmlSnippet.match(pattern);
+            if (match && match[1]) {
+              flightName = match[1].trim();
+              console.log(`   ✅ Pattern 4 matched: ${flightName}`);
+              break;
+            }
+          }
+        }
+        
+        // Filter out generic names
+        if (flightName && (flightName.toLowerCase().includes('log out') || flightName.length < 3)) {
+          console.log(`   ⚠️ Rejected generic name: "${flightName}"`);
+          flightName = null;
+        }
+        
+        if (!flightName) {
+          console.log(`   ⚠️ Flight name not found, will use filename from header/URL`);
+        }
+
+        // Send progress - downloading file
+        res.write(`data: ${JSON.stringify({
+          type: 'progress',
+          current,
+          total: selectedFlightIds.length,
+          message: `[${current}/${selectedFlightIds.length}] Downloading ${flightName || 'log file'}...`,
+          flightId
+        })}\n\n`);
+        
+        console.log(`   Looking for download link...`);
+
+        // Find download link
+        const downloadPattern = /location\s*=\s*['"](\/uploadFile\/viewFile\.php\?[^'"]+)['"]/i;
+        const downloadMatch = flightResponse.body.match(downloadPattern);
+
+        if (downloadMatch) {
+          let downloadPath = downloadMatch[1].replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"');
+          if (downloadPath.startsWith('/')) {
+            downloadPath = downloadPath.substring(1);
+          }
+          
+          console.log(`   Downloading from: ${downloadPath.substring(0, 80)}...`);
+
+          // Download the actual file with progress tracking
+          let lastSentKB = 0;
+          const fileResponse = await client.get(downloadPath, {
+            responseType: 'buffer',
+            followRedirect: true,
+            maxRedirects: 5,
+            throwHttpErrors: false,
+            headers: {
+              'Accept': 'application/octet-stream, */*',
+              'Referer': `https://www.dronelogbook.com/flight/flightDetail.php?id=${encodeURIComponent(flightId)}`
+            }
+          }).on('downloadProgress', progress => {
+            const transferred = (progress.transferred / 1024).toFixed(1);
+            const total = progress.total ? (progress.total / 1024).toFixed(1) : '?';
+            
+            // Send progress to UI every 10MB to reduce overhead
+            const currentKB = Math.floor(progress.transferred / 1024);
+            if (currentKB - lastSentKB >= 10000 || progress.percent === 1) {
+              lastSentKB = currentKB;
+              res.write(`data: ${JSON.stringify({
+                type: 'downloading',
+                current,
+                total: selectedFlightIds.length,
+                message: `[${current}/${selectedFlightIds.length}] Downloading... ${transferred} KB`,
+                flightId,
+                downloadedKB: transferred
+              })}\n\n`);
+            }
+            
+            // Terminal progress - show every update
+            const percent = progress.percent ? (progress.percent * 100).toFixed(1) : '?';
+            process.stdout.write(`\r   Progress: ${percent}% (${transferred}/${total} KB)`);
+          });
+          
+          console.log(''); // New line after progress
+          
+          console.log(`   File response status: ${fileResponse.statusCode}, size: ${fileResponse.body?.length || 0} bytes`);
+
+          if (fileResponse.statusCode === 200 && fileResponse.body && fileResponse.body.length > 0) {
+            // File downloaded successfully - store it for ZIP creation
+            const buffer = Buffer.isBuffer(fileResponse.body) ? fileResponse.body : Buffer.from(fileResponse.body);
+            
+            // Extract filename from Content-Disposition header if available
+            let filenameFromHeader = null;
+            const contentDisposition = fileResponse.headers['content-disposition'];
+            if (contentDisposition) {
+              const cdMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+              if (cdMatch && cdMatch[1]) {
+                filenameFromHeader = cdMatch[1].replace(/['"]/g, '');
+                console.log(`   📎 Filename from header: ${filenameFromHeader}`);
+              }
+            }
+            
+            // Create filename - priority: flight name > header filename > URL filename > flight ID
+            let filename;
+            if (flightName && !flightName.match(/^[A-F0-9-]{36}$/i)) {
+              // Use flight name with proper extension
+              const safeName = flightName.replace(/[<>:"/\\|?*]/g, '_');
+              let ext = 'bin';
+              if (filenameFromHeader && filenameFromHeader.includes('.')) {
+                ext = filenameFromHeader.split('.').pop().toLowerCase();
+              }
+              filename = `${safeName}.${ext}`;
+              console.log(`   📝 Using flight name: ${filename}`);
+            } else if (filenameFromHeader && filenameFromHeader.trim()) {
+              // Use filename from Content-Disposition header
+              filename = filenameFromHeader.trim();
+              console.log(`   📝 Using header filename: ${filename}`);
+            } else {
+              // Try to extract from URL parameter
+              const filenameMatch = downloadPath.match(/filename=([^&]+)/);
+              if (filenameMatch) {
+                filename = decodeURIComponent(filenameMatch[1]);
+                console.log(`   📝 Using URL filename: ${filename}`);
+              } else {
+                // Last resort: use flight ID
+                filename = `flight_${flightId}.bin`;
+                console.log(`   📝 Using fallback: ${filename}`);
+              }
+            }
+            
+            downloadedFiles.push({ buffer, filename });
+            successCount++;
+            console.log(`   ✅ Success (${(fileResponse.body.length / 1024).toFixed(1)} KB)`);
+            res.write(`data: ${JSON.stringify({
+              type: 'success',
+              current,
+              flightId,
+              fileName: flightName,
+              fileSize: `${(fileResponse.body.length / 1024).toFixed(1)} KB`
+            })}\n\n`);
+          } else {
+            errorCount++;
+            console.log(`   ❌ Failed to download file`);
+            res.write(`data: ${JSON.stringify({
+              type: 'error',
+              current,
+              flightId,
+              message: 'Failed to download file'
+            })}\n\n`);
+          }
+        } else {
+          errorCount++;
+          console.log(`   ❌ No download link found`);
+          res.write(`data: ${JSON.stringify({
+            type: 'error',
+            current,
+            flightId,
+            message: 'No download link found'
+          })}\n\n`);
+        }
+        
+      } catch (err) {
+        errorCount++;
+        console.error(`   ❌ Error: ${err.message}`);
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          current,
+          flightId,
+          message: err.message
+        })}\n\n`);
+      }
+    }
+
+    // Send completion message with download URL
+    const downloadToken = `dl_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Store files in memory cache with expiry
+    downloadCache.set(downloadToken, {
+      files: downloadedFiles,
+      timestamp: Date.now()
+    });
+    
+    // Clean up expired downloads
+    setTimeout(() => {
+      downloadCache.delete(downloadToken);
+      console.log(`🗑️ Cleaned up download token: ${downloadToken}`);
+    }, CACHE_EXPIRY);
+    
+    console.log(`💾 Cached ${downloadedFiles.length} files with token: ${downloadToken}`);
+    
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      successCount,
+      errorCount,
+      total: selectedFlightIds.length,
+      downloadToken
+    })}\n\n`);
+
+    res.end();
+
+  } catch (err) {
+    console.error('❌ Download progress stream error:', err.message);
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: err.message
+    })}\n\n`);
+    res.end();
+  }
+});
+
+// Endpoint: /api/flights/download-selected-logs
+// Creates ZIP from cached files (after progress tracking downloads them)
+app.get('/api/flights/download-selected-logs', async (req, res) => {
+  try {
+    const downloadToken = req.query.downloadToken;
+    console.log(`\n📦 GET /api/flights/download-selected-logs requested with token: ${downloadToken}`);
+
+    if (!downloadToken) {
+      return res.status(400).json({ error: 'Download token is required' });
+    }
+
+    const cachedData = downloadCache.get(downloadToken);
+    if (!cachedData) {
+      console.log(`❌ Download token not found: ${downloadToken}`);
+      return res.status(404).json({ error: 'Download not found or expired. Please try downloading again.' });
+    }
+
+    const downloadedFiles = cachedData.files;
+    console.log(`📦 Creating ZIP from ${downloadedFiles.length} cached files`);
+
+    // Create zip file and stream it
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="selected-logs-${Date.now()}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 1 } });
+    archive.pipe(res);
+
+    // Add all files to ZIP from cache
+    for (const file of downloadedFiles) {
+      archive.append(file.buffer, { name: file.filename });
+      console.log(`   ✅ Added: "${file.filename}" (${(file.buffer.length / 1024).toFixed(1)} KB)`);
+    }
+
+    console.log(`\n📦 Finalizing ZIP with ${downloadedFiles.length} files`);
+    await archive.finalize();
+    
+    // Clean up cache immediately after download starts
+    downloadCache.delete(downloadToken);
+    console.log(`🗑️ Cleaned up cache for token: ${downloadToken}`);
+
+  } catch (err) {
+    console.error('❌ Download selected logs error:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to download selected logs', details: err.message });
+    }
   }
 });
 

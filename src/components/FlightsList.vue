@@ -23,15 +23,24 @@
     <div v-if="!loading && !error && flights.length > 0" class="table-responsive">
       <table class="table table-striped table-hover">
         <colgroup>
-          <col style="width: 25%">
-          <col style="width: 12%">
-          <col style="width: 12%">
-          <col style="width: 12%">
-          <col style="width: 12%">
-          <col style="width: 27%">
+          <col style="width: 5%">
+          <col style="width: 23%">
+          <col style="width: 11%">
+          <col style="width: 11%">
+          <col style="width: 11%">
+          <col style="width: 11%">
+          <col style="width: 28%">
         </colgroup>
         <thead>
           <tr class="table-header">
+            <th scope="col">
+              <input 
+                type="checkbox" 
+                @change="toggleSelectAll" 
+                :checked="isAllSelected"
+                title="Select/Deselect all flights"
+              />
+            </th>
             <th scope="col">Flight Name</th>
             <th scope="col">Duration</th>
             <th scope="col">Date</th>
@@ -42,6 +51,14 @@
         </thead>
         <tbody>
           <tr v-for="flight in flights" :key="flight.id" class="flight-row">
+            <td>
+              <input 
+                type="checkbox" 
+                v-model="selectedFlights" 
+                :value="flight.id"
+                @change="updateSelectAllState"
+              />
+            </td>
             <td class="flight-name">{{ flight.name }}</td>
             <td class="flight-duration">{{ flight.duration || '-' }}</td>
             <td class="flight-date">{{ flight.date || '-' }}</td>
@@ -72,7 +89,7 @@
         <button
           class="btn btn-secondary"
           @click="goToPreviousPage"
-          :disabled="currentPage === 1"
+          :disabled="currentPage === 1 || loadingAll"
           title="Go to previous page"
         >
           <i class="fas fa-chevron-left"></i> Previous
@@ -81,11 +98,82 @@
         <button
           class="btn btn-secondary"
           @click="goToNextPage"
-          :disabled="!hasNextPage"
+          :disabled="!hasNextPage || loadingAll"
           title="Go to next page"
         >
           Next <i class="fas fa-chevron-right"></i>
         </button>
+        <button
+          class="btn btn-primary ms-3"
+          @click="loadAllFlights"
+          :disabled="loadingAll || !hasNextPage"
+          title="Load all flights from all pages"
+        >
+          <span v-if="loadingAll">
+            <i class="fas fa-spinner fa-spin"></i> Loading... ({{ loadedPages }}/?)
+          </span>
+          <span v-else>
+            <i class="fas fa-download"></i> Load All Flights
+          </span>
+        </button>
+        <button
+          class="btn btn-success ms-2"
+          @click="downloadAllLogs"
+          :disabled="downloadingAll"
+          title="Download all flight logs as a zip file"
+        >
+          <span v-if="downloadingAll">
+            <i class="fas fa-spinner fa-spin"></i> Downloading...
+          </span>
+          <span v-else>
+            <i class="fas fa-file-archive"></i> Download All Logs
+          </span>
+        </button>
+        <button
+          class="btn btn-warning ms-2"
+          @click="downloadSelectedLogs"
+          :disabled="selectedFlights.length === 0 || downloadingSelected"
+          :title="selectedFlights.length === 0 ? 'Select flights to download' : `Download ${selectedFlights.length} selected flight(s)`"
+        >
+          <span v-if="downloadingSelected">
+            <i class="fas fa-spinner fa-spin"></i> Downloading...
+          </span>
+          <span v-else>
+            <i class="fas fa-check-square"></i> Download Selected ({{ selectedFlights.length }})
+          </span>
+        </button>
+      </div>
+
+      <!-- Download Progress -->
+      <div v-if="downloadProgress.isDownloading" class="download-progress-section mt-3">
+        <div class="card">
+          <div class="card-body">
+            <h5 class="card-title">
+              <i class="fas fa-download fa-spin"></i> {{ downloadProgress.type === 'all' ? 'Downloading All Logs' : 'Downloading Selected Logs' }}
+            </h5>
+            <p class="mb-2">
+              <strong>{{ downloadProgress.currentFile }}</strong>
+              <span v-if="downloadProgress.currentFileSize" class="text-muted ms-2">
+                ({{ downloadProgress.currentFileSize }})
+              </span>
+            </p>
+            <div class="progress" style="height: 25px;">
+              <div 
+                class="progress-bar progress-bar-striped progress-bar-animated" 
+                role="progressbar" 
+                :style="{ width: downloadProgress.percentage + '%' }"
+                :aria-valuenow="downloadProgress.percentage" 
+                aria-valuemin="0" 
+                aria-valuemax="100"
+              >
+                {{ downloadProgress.current }} / {{ downloadProgress.total }} ({{ downloadProgress.percentage }}%)
+              </div>
+            </div>
+            <small class="text-muted mt-2 d-block">
+              {{ downloadProgress.successCount }} succeeded, {{ downloadProgress.errorCount }} failed
+            </small>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -100,7 +188,7 @@
 
 <script>
 import { ref, onMounted } from 'vue'
-import { fetchFlightLogsForDrone, getFlightDetailUrl } from '../services/flight-logs'
+import { fetchFlightLogsForDrone, fetchAllFlightLogs, getFlightDetailUrl } from '../services/flight-logs'
 
 export default {
   name: 'FlightsList',
@@ -120,6 +208,23 @@ export default {
     const error = ref(null)
     const currentPage = ref(1)
     const hasNextPage = ref(false)
+    const loadingAll = ref(false)
+    const loadedPages = ref(0)
+    const downloadingAll = ref(false)
+    const selectedFlights = ref([])
+    const isAllSelected = ref(false)
+    const downloadingSelected = ref(false)
+    const downloadProgress = ref({
+      isDownloading: false,
+      type: '', // 'all' or 'selected'
+      current: 0,
+      total: 0,
+      percentage: 0,
+      currentFile: '',
+      currentFileSize: '',
+      successCount: 0,
+      errorCount: 0
+    })
 
     const loadFlights = async () => {
       if (!props.droneId) {
@@ -136,6 +241,7 @@ export default {
         console.log(`📝 FlightsList loading flights for drone: ${props.droneId}, page: ${currentPage.value}`)
         const result = await fetchFlightLogsForDrone(props.droneId, currentPage.value)
         console.log(`✅ Successfully loaded ${result.flights.length} flights`)
+        console.log(`🔍 First 3 flight IDs:`, result.flights.slice(0, 3).map(f => f.id))
         flights.value = result.flights
         hasNextPage.value = result.hasNextPage
       } catch (err) {
@@ -200,9 +306,288 @@ export default {
       }
     }
 
+    const loadAllFlights = async () => {
+      if (!props.droneId) {
+        error.value = 'No drone ID provided'
+        return
+      }
+
+      loadingAll.value = true
+      loadedPages.value = 0
+      error.value = null
+      
+      // Keep current page 1 flights, we'll append to them
+      const initialFlights = [...flights.value]
+      flights.value = []
+
+      try {
+        console.log(`📥 Loading ALL flights for drone: ${props.droneId}`)
+        
+        await fetchAllFlightLogs(props.droneId, (pageFlights, pageNum) => {
+          loadedPages.value = pageNum
+          console.log(`✅ Page ${pageNum} loaded with ${pageFlights.length} flights`)
+          
+          // Append new flights to the list
+          flights.value = [...flights.value, ...pageFlights]
+        })
+        
+        console.log(`🎉 All flights loaded! Total: ${flights.value.length}`)
+        
+        // After loading all, disable pagination
+        hasNextPage.value = false
+        currentPage.value = 1  // Reset to show we're viewing "all"
+        
+      } catch (err) {
+        error.value = err.message || 'Failed to load all flights'
+        console.error('❌ Failed to load all flights:', err)
+        // Restore initial flights on error
+        flights.value = initialFlights
+      } finally {
+        loadingAll.value = false
+      }
+    }
+
     const openFlightDetail = (flight) => {
       const detailUrl = getFlightDetailUrl(flight.id)
       window.open(detailUrl, '_blank')
+    }
+
+    const toggleSelectAll = (event) => {
+      if (event.target.checked) {
+        selectedFlights.value = flights.value.map(f => f.id)
+        isAllSelected.value = true
+      } else {
+        selectedFlights.value = []
+        isAllSelected.value = false
+      }
+    }
+
+    const updateSelectAllState = () => {
+      isAllSelected.value = selectedFlights.value.length === flights.value.length && flights.value.length > 0
+    }
+
+    const downloadSelectedLogs = async () => {
+      if (selectedFlights.value.length === 0) {
+        console.log('No flights selected')
+        return
+      }
+
+      console.log(`📦 Downloading ${selectedFlights.value.length} selected logs...`)
+      downloadingSelected.value = true
+      
+      // Initialize progress
+      downloadProgress.value = {
+        isDownloading: true,
+        type: 'selected',
+        current: 0,
+        total: selectedFlights.value.length,
+        percentage: 0,
+        currentFile: `Preparing to download ${selectedFlights.value.length} flights...`,
+        successCount: 0,
+        errorCount: 0
+      }
+
+      try {
+        // Use EventSource for real-time progress updates
+        const flightIds = selectedFlights.value.join(',')
+        const progressUrl = `/api/flights/download-selected-logs-progress?flightIds=${encodeURIComponent(flightIds)}`
+        const eventSource = new EventSource(progressUrl)
+        
+        let downloadStarted = false
+        
+        eventSource.onmessage = (event) => {
+          const data = JSON.parse(event.data)
+          
+          if (data.type === 'progress') {
+            downloadProgress.value.current = data.current
+            downloadProgress.value.currentFile = data.message
+            downloadProgress.value.percentage = Math.round((data.current / downloadProgress.value.total) * 100)
+            downloadProgress.value.currentFileSize = ''
+          } else if (data.type === 'downloading') {
+            // Real-time download progress with KB count
+            downloadProgress.value.currentFile = data.message
+            downloadProgress.value.currentFileSize = data.downloadedKB ? `${data.downloadedKB} KB` : ''
+          } else if (data.type === 'success') {
+            downloadProgress.value.successCount++
+            // Update to show completed file with size
+            if (data.fileName) {
+              downloadProgress.value.currentFile = `✅ ${data.fileName}`
+              downloadProgress.value.currentFileSize = data.fileSize || ''
+            }
+          } else if (data.type === 'error') {
+            downloadProgress.value.errorCount++
+          } else if (data.type === 'complete') {
+            eventSource.close()
+            
+            if (!downloadStarted && data.downloadToken) {
+              downloadStarted = true
+              downloadProgress.value.currentFile = 'Creating ZIP file...'
+              downloadProgress.value.percentage = 100
+              
+              // Now fetch the actual file using the download token
+              const downloadUrl = `/api/flights/download-selected-logs?downloadToken=${encodeURIComponent(data.downloadToken)}`
+              
+              fetch(downloadUrl)
+                .then(response => {
+                  if (!response.ok) throw new Error('Download failed')
+                  return response.blob()
+                })
+                .then(blob => {
+                  // Create download link
+                  const url = window.URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `selected-logs-${Date.now()}.zip`
+                  document.body.appendChild(a)
+                  a.click()
+                  window.URL.revokeObjectURL(url)
+                  document.body.removeChild(a)
+                  
+                  downloadProgress.value.currentFile = `✅ Downloaded ${downloadProgress.value.successCount} flights!`
+                  
+                  // Clear progress after delay
+                  setTimeout(() => {
+                    downloadProgress.value.isDownloading = false
+                    downloadingSelected.value = false
+                  }, 3000)
+                })
+                .catch(err => {
+                  console.error('❌ Download failed:', err)
+                  error.value = 'Failed to download ZIP file'
+                  downloadProgress.value.isDownloading = false
+                  downloadingSelected.value = false
+                })
+            }
+          }
+        }
+        
+        eventSource.onerror = (err) => {
+          console.error('❌ EventSource error:', err)
+          eventSource.close()
+          error.value = 'Download progress tracking failed'
+          downloadProgress.value.isDownloading = false
+          downloadingSelected.value = false
+        }
+        
+      } catch (err) {
+        console.error('❌ Download selected logs error:', err)
+        error.value = 'Failed to download selected logs'
+        downloadProgress.value.isDownloading = false
+        downloadingSelected.value = false
+      }
+    }
+
+    const downloadAllLogs = async () => {
+      if (!props.droneId) {
+        alert('No drone ID provided')
+        return
+      }
+
+      downloadingAll.value = true
+      
+      // Initialize progress
+      downloadProgress.value = {
+        isDownloading: true,
+        type: 'all',
+        current: 0,
+        total: 0,
+        percentage: 0,
+        currentFile: 'Preparing to download all flights...',
+        currentFileSize: '',
+        successCount: 0,
+        errorCount: 0
+      }
+
+      try {
+        console.log(`📦 Downloading all logs for drone: ${props.droneId}`)
+        
+        // Use EventSource for real-time progress updates
+        const progressUrl = `/api/flights/download-all-logs-progress?droneId=${encodeURIComponent(props.droneId)}`
+        const eventSource = new EventSource(progressUrl)
+        
+        let downloadStarted = false
+        
+        eventSource.onmessage = (event) => {
+          const data = JSON.parse(event.data)
+          
+          if (data.type === 'progress') {
+            if (data.total) {
+              downloadProgress.value.total = data.total
+            }
+            downloadProgress.value.current = data.current
+            downloadProgress.value.currentFile = data.message
+            downloadProgress.value.percentage = data.total ? Math.round((data.current / data.total) * 100) : 0
+            downloadProgress.value.currentFileSize = ''
+          } else if (data.type === 'downloading') {
+            // Real-time download progress with KB count
+            downloadProgress.value.currentFile = data.message
+            downloadProgress.value.currentFileSize = data.downloadedKB ? `${data.downloadedKB} KB` : ''
+          } else if (data.type === 'success') {
+            downloadProgress.value.successCount++
+            if (data.fileName) {
+              downloadProgress.value.currentFile = `✅ ${data.fileName}`
+              downloadProgress.value.currentFileSize = data.fileSize || ''
+            }
+          } else if (data.type === 'error') {
+            downloadProgress.value.errorCount++
+          } else if (data.type === 'complete') {
+            eventSource.close()
+            
+            if (!downloadStarted && data.downloadToken) {
+              downloadStarted = true
+              downloadProgress.value.currentFile = 'Creating ZIP file...'
+              downloadProgress.value.percentage = 100
+              
+              // Now fetch the actual file using the download token
+              const downloadUrl = `/api/flights/download-all-logs?downloadToken=${encodeURIComponent(data.downloadToken)}`
+              
+              fetch(downloadUrl)
+                .then(response => {
+                  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+                  return response.blob()
+                })
+                .then(blob => {
+                  const url = window.URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `all-logs-${Date.now()}.zip`
+                  document.body.appendChild(a)
+                  a.click()
+                  window.URL.revokeObjectURL(url)
+                  document.body.removeChild(a)
+                  
+                  downloadProgress.value.currentFile = `✅ Downloaded ${downloadProgress.value.successCount} flights!`
+                  
+                  // Clear progress after delay
+                  setTimeout(() => {
+                    downloadProgress.value.isDownloading = false
+                    downloadingAll.value = false
+                  }, 3000)
+                })
+                .catch(err => {
+                  console.error('❌ Download failed:', err)
+                  error.value = 'Failed to download ZIP file'
+                  downloadProgress.value.isDownloading = false
+                  downloadingAll.value = false
+                })
+            }
+          }
+        }
+        
+        eventSource.onerror = (err) => {
+          console.error('❌ EventSource error:', err)
+          eventSource.close()
+          error.value = 'Download progress tracking failed'
+          downloadProgress.value.isDownloading = false
+          downloadingAll.value = false
+        }
+        
+      } catch (err) {
+        console.error('❌ Download all failed:', err)
+        alert(`Failed to download all logs: ${err.message}`)
+        downloadProgress.value.isDownloading = false
+        downloadingAll.value = false
+      }
     }
 
     onMounted(() => {
@@ -219,8 +604,20 @@ export default {
       error,
       currentPage,
       hasNextPage,
+      loadingAll,
+      loadedPages,
+      downloadingAll,
+      selectedFlights,
+      isAllSelected,
+      downloadingSelected,
+      downloadProgress,
       loadFlights,
+      loadAllFlights,
       downloadLog,
+      downloadAllLogs,
+      downloadSelectedLogs,
+      toggleSelectAll,
+      updateSelectAllState,
       openFlightDetail,
       goToNextPage,
       goToPreviousPage
